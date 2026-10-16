@@ -1,0 +1,120 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 820" width="480" height="820" role="img" aria-label="The DAGs run locally and write to Supabase, which feeds the page; GitHub Actions tests, builds and deploys" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="13">
+  <title>F1 race pace MLOps: architecture</title>
+  <desc>Three Airflow DAGs run on demand locally on Kubernetes (kind): training, prediction after qualifying, and ground truth after the race. The training DAG has four steps: sampling (ingestion and train/test split), preprocess, training and evaluate. Raw data stays in local Parquet and MLflow holds runs, registry and the registered datasets. Features, predictions and metrics go to Supabase, where the GitHub Pages site reads the public tables. Evidently, after the core, reads features and results from Supabase, writes its drift reports there and triggers retraining. Also after the core, GitHub Actions (CI/CD) runs the tests, builds the images used by the pods, and deploys the page; model promotion is a local script.</desc>
+
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0L10 5L0 10z" fill="#9aa39b"/>
+    </marker>
+    <style>
+      .edge { stroke: #9aa39b; }
+      .box  { fill: none; stroke: #9aa39b; stroke-width: 1.25; }
+      .dag  { fill: #2f6feb; fill-opacity: .12; stroke: #2f6feb; stroke-width: 1.25; }
+      .soon { fill: none; stroke: #9aa39b; stroke-width: 1.25; stroke-dasharray: 5 4; }
+      .ink  { fill: #11181c; font-weight: 600; }
+      .sub  { fill: #5c6670; font-size: 11.5px; }
+      .key  { fill: #5c6670; font-size: 12px; }
+      .flow { fill: none; stroke: #9aa39b; stroke-width: 1.25; }
+      @media (prefers-color-scheme: dark) {
+        .edge, .box, .soon, .flow { stroke: #7d8780; }
+        .ink { fill: #eceef0; }
+        .sub, .key { fill: #a8b0b8; }
+        .dag { fill: #6fa0ff; fill-opacity: .16; stroke: #6fa0ff; }
+      }
+    </style>
+  </defs>
+
+  <text class="ink" x="16" y="28" font-size="15">The DAGs run locally; the page reads Supabase</text>
+
+  <!-- external sources and destinations -->
+  <rect class="box" x="16" y="48" width="136" height="56" rx="8"/>
+  <text class="ink" x="84" y="72" text-anchor="middle">FastF1</text>
+  <text class="sub" x="84" y="88" text-anchor="middle">Race data</text>
+
+  <rect class="box" x="172" y="48" width="136" height="56" rx="8"/>
+  <text class="ink" x="240" y="72" text-anchor="middle">Supabase</text>
+  <text class="sub" x="240" y="88" text-anchor="middle">Features and results</text>
+
+  <rect class="box" x="328" y="48" width="136" height="56" rx="8"/>
+  <text class="ink" x="396" y="72" text-anchor="middle">Page</text>
+  <text class="sub" x="396" y="88" text-anchor="middle">GitHub Pages</text>
+
+  <!-- local -->
+  <rect x="16" y="144" width="448" height="488" rx="12" fill="none" stroke="#9aa39b" stroke-width="1" stroke-dasharray="5 4"/>
+  <text class="ink" x="240" y="166" text-anchor="middle">Local: Kubernetes (kind)</text>
+
+  <rect x="32" y="180" width="416" height="260" rx="10" fill="none" stroke="#9aa39b" stroke-width="1"/>
+  <text class="ink" x="240" y="202" text-anchor="middle">Airflow: 3 on-demand DAGs</text>
+
+  <rect class="dag" x="48" y="216" width="384" height="112" rx="8"/>
+  <text class="ink" x="240" y="238" text-anchor="middle">Training DAG</text>
+  <rect class="box" x="55" y="252" width="82" height="64" rx="6"/>
+  <text class="ink" x="96" y="274" text-anchor="middle">Sampling</text>
+  <text class="sub" x="96" y="291" text-anchor="middle">Ingestion</text>
+  <text class="sub" x="96" y="305" text-anchor="middle">80/20 split</text>
+  <path class="flow" d="M138 284H150" marker-end="url(#arrow)"/>
+  <rect class="box" x="151" y="252" width="82" height="64" rx="6"/>
+  <text class="ink" x="192" y="274" text-anchor="middle">Preprocess</text>
+  <text class="sub" x="192" y="291" text-anchor="middle">Target</text>
+  <text class="sub" x="192" y="305" text-anchor="middle">Features</text>
+  <path class="flow" d="M234 284H246" marker-end="url(#arrow)"/>
+  <rect class="box" x="247" y="252" width="82" height="64" rx="6"/>
+  <text class="ink" x="288" y="274" text-anchor="middle">Training</text>
+  <text class="sub" x="288" y="291" text-anchor="middle">6 models</text>
+  <text class="sub" x="288" y="305" text-anchor="middle">Optuna</text>
+  <path class="flow" d="M330 284H342" marker-end="url(#arrow)"/>
+  <rect class="box" x="343" y="252" width="82" height="64" rx="6"/>
+  <text class="ink" x="384" y="274" text-anchor="middle">Evaluate</text>
+  <text class="sub" x="384" y="291" text-anchor="middle">Selection</text>
+  <text class="sub" x="384" y="305" text-anchor="middle">SHAP, card</text>
+
+  <rect class="dag" x="48" y="352" width="176" height="72" rx="8"/>
+  <text class="ink" x="136" y="376" text-anchor="middle">Prediction DAG</text>
+  <text class="sub" x="136" y="392" text-anchor="middle">Race weekend ingestion</text>
+  <text class="sub" x="136" y="408" text-anchor="middle">After Saturday qualifying</text>
+
+  <rect class="dag" x="256" y="352" width="176" height="72" rx="8"/>
+  <text class="ink" x="344" y="376" text-anchor="middle">Ground truth DAG</text>
+  <text class="sub" x="344" y="392" text-anchor="middle">Ingestion of that race</text>
+  <text class="sub" x="344" y="408" text-anchor="middle">Actual target and error</text>
+
+  <!-- local storage -->
+  <rect class="box" x="48" y="464" width="176" height="56" rx="8"/>
+  <text class="ink" x="136" y="488" text-anchor="middle">Local Parquet</text>
+  <text class="sub" x="136" y="504" text-anchor="middle">Raw data only</text>
+
+  <rect class="box" x="256" y="464" width="176" height="56" rx="8"/>
+  <text class="ink" x="344" y="488" text-anchor="middle">MLflow</text>
+  <text class="sub" x="344" y="504" text-anchor="middle">Runs, registry and datasets</text>
+
+  <!-- monitoring, after the core -->
+  <rect class="soon" x="48" y="544" width="176" height="72" rx="8"/>
+  <text class="ink" x="136" y="568" text-anchor="middle">Evidently</text>
+  <text class="sub" x="136" y="584" text-anchor="middle">Drift and MAE</text>
+  <text class="sub" x="136" y="600" text-anchor="middle">Triggers retrain. After core</text>
+
+  <!-- flows -->
+  <path class="flow" d="M84 106V178" marker-end="url(#arrow)"/>
+  <path class="flow" d="M308 76H326" marker-end="url(#arrow)"/>
+  <path class="flow" d="M434 388H456V118H240V106" marker-end="url(#arrow)"/>
+  <path class="flow" d="M136 442V462" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
+  <path class="flow" d="M344 442V462" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
+  <path class="flow" d="M224 580H456V388" stroke-dasharray="5 4" marker-start="url(#arrow)"/>
+  <path class="flow" d="M48 580H24V272H46" stroke-dasharray="5 4" marker-end="url(#arrow)"/>
+
+  <!-- CI/CD, after the core -->
+  <rect class="soon" x="16" y="656" width="448" height="72" rx="8"/>
+  <text class="ink" x="240" y="680" text-anchor="middle">GitHub Actions (CI/CD)</text>
+  <text class="sub" x="240" y="696" text-anchor="middle">Tests and image builds</text>
+  <text class="sub" x="240" y="712" text-anchor="middle">Page deploy on push to main. After the core</text>
+  <path class="flow" d="M240 654V634" stroke-dasharray="5 4" marker-end="url(#arrow)"/>
+  <path class="flow" d="M464 692H472V76H466" stroke-dasharray="5 4" marker-end="url(#arrow)"/>
+
+  <!-- key -->
+  <rect class="dag" x="16" y="756" width="14" height="14" rx="3"/>
+  <text class="key" x="38" y="767">DAG (each step runs as a pod)</text>
+  <rect class="soon" x="248" y="756" width="14" height="14" rx="3" stroke-dasharray="4 3"/>
+  <text class="key" x="270" y="767">After the core</text>
+  <line class="edge" x1="16" y1="790" x2="30" y2="790" stroke-width="1.25" stroke-dasharray="4 3"/>
+  <text class="key" x="38" y="794">After-the-core flow (retraining, builds, deploy)</text>
+</svg>
