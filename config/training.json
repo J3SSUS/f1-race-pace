@@ -1,0 +1,128 @@
+{
+  "data": {
+    "first_year": 2022,
+    "last_year": 2025,
+    "cutoff": null
+  },
+  "split": {
+    "test_fraction": 0.2
+  },
+  "cv": {
+    "folds": 5
+  },
+  "optuna": {
+    "trials": 50,
+    "seed": 42
+  },
+  "imputation": [
+    "median",
+    "mean"
+  ],
+  "models": {
+    "ridge": {
+      "enabled": true,
+      "params": {
+        "alpha": [
+          0.01,
+          100,
+          "log"
+        ]
+      }
+    },
+    "elasticnet": {
+      "enabled": true,
+      "params": {
+        "alpha": [
+          0.001,
+          10,
+          "log"
+        ],
+        "l1_ratio": [
+          0.1,
+          0.9
+        ],
+        "max_iter": 10000
+      }
+    },
+    "random_forest": {
+      "enabled": true,
+      "params": {
+        "n_estimators": [
+          100,
+          500
+        ],
+        "max_depth": [
+          3,
+          12
+        ],
+        "min_samples_leaf": [
+          1,
+          10
+        ]
+      }
+    },
+    "xgboost": {
+      "enabled": true,
+      "params": {
+        "n_estimators": [
+          100,
+          600
+        ],
+        "max_depth": [
+          2,
+          6
+        ],
+        "learning_rate": [
+          0.01,
+          0.3,
+          "log"
+        ],
+        "subsample": [
+          0.6,
+          1.0
+        ]
+      }
+    },
+    "lightgbm": {
+      "enabled": true,
+      "params": {
+        "n_estimators": [
+          100,
+          600
+        ],
+        "num_leaves": [
+          8,
+          64
+        ],
+        "learning_rate": [
+          0.01,
+          0.3,
+          "log"
+        ],
+        "min_child_samples": [
+          5,
+          40
+        ]
+      }
+    },
+    "catboost": {
+      "enabled": true,
+      "params": {
+        "iterations": [
+          100,
+          600
+        ],
+        "depth": [
+          3,
+          8
+        ],
+        "learning_rate": [
+          0.01,
+          0.3,
+          "log"
+        ],
+        "verbose": 0
+      }
+    }
+  }
+}
