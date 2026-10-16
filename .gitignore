@@ -1,0 +1,13 @@
+# FastF1 cache
+.fastf1_cache/
+
+# Secrets and local environment
+.env
+
+# Python
+__pycache__/
+.ipynb_checkpoints/
+.venv/
+
+docs/alcance_arquitectura.md
+docs/backlog.md
