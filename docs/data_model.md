@@ -30,7 +30,7 @@ To regenerate: `dot -Tsvg diagrams/erd.dot -o diagrams/erd.svg`.
 
 | Table | Key | Purpose |
 | --- | --- | --- |
-| `features` | `feature_id` | Catalog that mirrors `features.yml`: name, group (qualifying, practice, form, circuit, weather, context), dtype and `known_on_saturday`. |
+| `features` | `feature_id` | Catalog that mirrors `features.yml`: name, group (qualifying, practice, sprint, form, circuit, weather, context), dtype and `known_on_saturday`. |
 | `feature_sets` | `feature_set_id` | A named version (`v1`, `v2`...) of the list of features a model uses, with a `schema_hash` of the Pandera schema. |
 | `feature_set_items` | `(feature_set_id, feature_id)` | Which features belong to a set and in what `position`, so the wide matrix is rebuilt in the order the model expects. |
 | `feature_values` | `(entry_id, feature_id, feature_set_id)` | The values. `value_num` holds numbers and flags (0/1), `value_text` holds categories such as `circuit_type`. A missing value (for example FP2 on a sprint weekend) is stored as NULL or simply no row; imputation stays inside each model's pipeline, as the contract says. |
