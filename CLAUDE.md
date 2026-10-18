@@ -2,7 +2,7 @@
 
 Predicts, after Saturday qualifying, each F1 driver's race pace for Sunday (`race_pace_delta_pct`) and publishes it on a static page. Everything runs locally and costs nothing. The user writes in Spanish; the docs and code are in English.
 
-Status: design phase, no code yet (phase 0 is next). Read `docs/backlog.md` before starting any task and respect its phase order and definitions of done.
+Status: phase 0 (setup) in progress. Read `docs/backlog.md` before starting any task and respect its phase order and definitions of done.
 
 ## Where things are
 
