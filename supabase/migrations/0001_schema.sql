@@ -203,7 +203,7 @@ SELECT r.year, r.round, d.code AS driver, t.name AS team,
 FROM predictions p
 JOIN prediction_runs pr USING (prediction_run_id)
 JOIN race_entries e     USING (entry_id)
-JOIN races r            USING (race_id)
+JOIN races r            ON r.race_id = e.race_id
 JOIN drivers d          USING (driver_id)
 JOIN teams t            ON t.team_id = e.team_id
 LEFT JOIN ground_truth g USING (entry_id);   -- NULL until the race result is ingested
