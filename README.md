@@ -14,7 +14,7 @@ Phase 0 (setup) in progress. The scope, data model and backlog are written; the 
 uv sync                         # Python 3.12 environment from uv.lock
 uv run pytest                   # tests
 cp .env.example .env            # then fill in the values
-docker compose up -d --build    # MLflow at http://localhost:5000
+docker compose up -d --build    # MLflow at http://localhost:5001
 ```
 
 Supabase: create a project, open the SQL editor, run `supabase/migrations/0001_schema.sql`, and copy the URL, anon key and service key into `.env`. The service key never goes in the repository.
