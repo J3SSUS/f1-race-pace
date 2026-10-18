@@ -121,8 +121,8 @@ Everything calculated is stored in Supabase and training reads it from there, so
 
 | Data | Table | Coverage |
 | --- | --- | --- |
-| Features | `feature_values` | Every driver-race row from 2022 to the latest race, for each feature set. About 1,800 entries × 15 features ≈ 27,000 rows per set. |
-| Actual result (the target) | `ground_truth` | Every race from 2022 to the latest, including every season used for train and test. |
+| Features | `feature_values` | Every driver-race row from 2023 to the latest race, for each feature set. About 1,400 entries × 15 features ≈ 21,000 rows per set. |
+| Actual result (the target) | `ground_truth` | Every race from 2023 to the latest, including every season used for train and test. |
 | Race, driver and team identity | `races`, `race_entries`, `drivers`, `teams` | All years. |
 | Predictions | `predictions` | The 2026 backtest plus live predictions from 2027 (and any late-2026 race predicted live). |
 | Metrics and models | `metrics`, `model_versions` | Train, test and per-race results. |
@@ -131,7 +131,7 @@ Raw data (laps, sessions, weather) stays in local Parquet. It is only needed to 
 
 ## Where tables live
 
-Every table of this model lives in **Supabase**; there is no second relational database. What stays outside is not in the diagram: raw FastF1 data (local Parquet, used only to calculate features and targets) and the MLflow runs, artifacts and `champion` alias (local). There is no second copy of the features in Parquet.
+Every table of this model lives in **Supabase**; there is no second relational database. What stays outside is not in the diagram: raw OpenF1 data (local Parquet, used only to calculate features and targets) and the MLflow runs, artifacts and `champion` alias (local). There is no second copy of the features in Parquet.
 
 Access is controlled with Row Level Security (RLS). RLS is enabled on every table; the difference is whether a policy exists for the `anon` key, the one the page uses in the browser. The `service_role` key used by the DAGs bypasses RLS, lives only on the local machine and never goes in the repository.
 

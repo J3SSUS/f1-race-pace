@@ -16,13 +16,13 @@ Status: phase 0 (setup) in progress. Read `docs/backlog.md` before starting any 
 ## Frozen contracts (do not change without a line in DECISIONS.md)
 
 - **Row:** one driver in one race, with data up to the end of Saturday. **Never use Sunday data as a feature** (the race grid is Sunday data; `grid_position` is the qualifying position).
-- **Target:** `(median clean lap of the driver / median clean lap of the field - 1) * 100`. Clean lap: lap > 1, no pit in or out, `TrackStatus == "1"`, `IsAccurate`. A driver needs at least 10 clean laps (valid row). The target function lives in `src/features/` and is the only implementation.
-- **Ingestion** is one idempotent function in `src/`, used by the `sampling` step and by the prediction and ground truth DAGs.
+- **Target:** `(median clean lap of the driver / median clean lap of the field - 1) * 100`. Clean lap: lap > 1, not a pit-out lap, no pit stop in the lap, a recorded lap time, and no safety car, virtual safety car, red flag or track-wide yellow during the lap (intervals from OpenF1 `race_control`). A driver needs at least 10 clean laps (valid row). The target function lives in `src/features/` and is the only implementation.
+- **Ingestion** reads OpenF1 (free, from 2023; FastF1's archive needs a paid F1 TV subscription since 2026-10-15) and is one idempotent function in `src/`, used by the `sampling` step and by the prediction and ground truth DAGs.
 - **Training DAG:** `sampling → preprocess → training → evaluate`, one pod per step and per model. Sampling ingests, applies the 80/20 chronological split by race (from the config) and registers the Parquets in MLflow as datasets. Nobody else redefines the split.
 - **Data:** raw data in local Parquet; everything calculated (features in long format, ground truth, predictions, metrics) in Supabase. Training reads features from Supabase.
 - **Models:** qualifying baseline (linear regression on `quali_delta_pct`) plus Ridge, ElasticNet, Random Forest, XGBoost, LightGBM and CatBoost, with Optuna and temporal CV inside train. Imputation lives inside each model's pipeline. Main metric: MAE against the baseline, counting only valid rows. Test is touched once.
 - **Champion:** the `champion` alias on the MLflow model `f1-race-pace`. Training and Evaluate never promote. Promotion is the local script `scripts/promote.py` (first champion by hand; later only with the 0.98 × MAE rule over the last 5 races), never GitHub Actions.
-- **Calendar:** first model trains on 2022–2025; 2026 is a walk-forward backtest with a frozen shadow; live predictions start with 2027 (or the last 2026 races if the pipeline is ready).
+- **Calendar:** first model trains on 2023–2025 (OpenF1 has no earlier data); 2026 is a walk-forward backtest with a frozen shadow; live predictions start with 2027 (or the last 2026 races if the pipeline is ready).
 - **Secrets:** the Supabase service key lives in `.env` (gitignored) or a Kubernetes Secret, never in the repo. The page only uses the anon key with read-only RLS.
 
 ## Conventions

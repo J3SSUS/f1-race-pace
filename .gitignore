@@ -11,5 +11,5 @@ __pycache__/
 
 docs/alcance_arquitectura.md
 docs/backlog.md
-# Local data (raw Parquet, FastF1 cache, reports)
+# Local data (raw Parquet, OpenF1 probes, reports)
 data/
