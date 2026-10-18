@@ -1,51 +1,129 @@
 from datetime import UTC, datetime
 
 import pandas as pd
+import pytest
 
-from ingestion.schedule import expected_sessions, held_events
+from ingestion.schedule import build_schedule, expected_sessions, held_events, load_schedule, load_schedules
 
 NORMAL = ["Practice 1", "Practice 2", "Practice 3", "Qualifying", "Race"]
-SPRINT_2023 = ["Practice 1", "Qualifying", "Sprint Shootout", "Sprint", "Race"]
+SPRINT_2023 = ["Practice 1", "Qualifying", "Sprint Qualifying", "Sprint", "Race"]
 SPRINT_2024 = ["Practice 1", "Sprint Qualifying", "Sprint", "Qualifying", "Race"]
 
 
-def event(year, rnd, names, start="2024-05-17 11:30"):
-    row = {"Year": year, "RoundNumber": rnd, "EventName": f"GP {rnd}"}
-    base = pd.Timestamp(start)
-    for i in range(1, 6):
-        name = names[i - 1] if i <= len(names) else None
-        row[f"Session{i}"] = name
-        row[f"Session{i}DateUtc"] = base + pd.Timedelta(i, unit="D") if name else pd.NaT
-    return row
+def meeting(key, names, start, cancelled=False, hours=2):
+    """Sessions of one meeting, one per day from `start`, as the OpenF1 `sessions` endpoint returns them."""
+    base = pd.Timestamp(start, tz="UTC")
+    rows = []
+    for i, name in enumerate(names):
+        begin = base + pd.Timedelta(i, unit="D")
+        rows.append(
+            {
+                "session_key": key * 10 + i,
+                "meeting_key": key,
+                "session_name": name,
+                "location": f"Place {key}",
+                "date_start": begin.isoformat(),
+                "date_end": (begin + pd.Timedelta(hours, unit="h")).isoformat(),
+                "is_cancelled": cancelled,
+            }
+        )
+    return rows
 
 
-def schedule(*events):
-    return pd.DataFrame(events)
+def meetings(*keys):
+    return [{"meeting_key": k, "meeting_name": f"Grand Prix {k}"} for k in keys]
+
+
+def schedule_of(*groups, year=2024):
+    sessions = [row for group in groups for row in group]
+    return build_schedule(sessions, meetings(*{r["meeting_key"] for r in sessions}), year)
 
 
 def test_normal_weekend():
-    assert expected_sessions(schedule(event(2024, 7, NORMAL)).iloc[0]) == ["FP1", "FP2", "FP3", "Q", "R"]
+    sched = schedule_of(meeting(1, NORMAL, "2024-03-01"))
+    assert expected_sessions(sched, 2024, 1) == ["FP1", "FP2", "FP3", "Q", "R"]
 
 
 def test_sprint_weekend_2024():
-    assert expected_sessions(schedule(event(2024, 5, SPRINT_2024)).iloc[0]) == ["FP1", "SQ", "S", "Q", "R"]
+    sched = schedule_of(meeting(1, SPRINT_2024, "2024-03-01"))
+    assert expected_sessions(sched, 2024, 1) == ["FP1", "SQ", "S", "Q", "R"]
 
 
-def test_sprint_weekend_2023():
-    assert expected_sessions(schedule(event(2023, 4, SPRINT_2023)).iloc[0]) == ["FP1", "Q", "SS", "S", "R"]
+def test_sprint_weekend_2023_keeps_openf1_naming():
+    sched = schedule_of(meeting(1, SPRINT_2023, "2023-04-28"), year=2023)
+    assert expected_sessions(sched, 2023, 1) == ["FP1", "Q", "SQ", "S", "R"]
 
 
-def test_held_events_excludes_future_and_testing():
-    sched = schedule(
-        event(2024, 0, ["Practice 1", "Practice 2", "Practice 3"], "2024-02-20 07:00"),
-        event(2024, 1, NORMAL, "2024-03-01 11:30"),
-        event(2024, 2, NORMAL, "2024-09-01 11:30"),
+def test_testing_and_cancelled_events_get_no_round():
+    sched = schedule_of(
+        meeting(1, ["Day 1", "Day 2", "Day 3"], "2024-02-21"),
+        meeting(2, NORMAL, "2024-03-01"),
+        meeting(3, NORMAL, "2024-04-01", cancelled=True),
+        meeting(4, NORMAL, "2024-05-01"),
     )
+    events = sched[["round", "event_name"]].drop_duplicates().sort_values("round")
+    assert events.values.tolist() == [[1, "Grand Prix 2"], [2, "Grand Prix 4"]]
+
+
+def test_rounds_follow_race_dates_not_input_order():
+    sched = schedule_of(meeting(2, NORMAL, "2024-05-01"), meeting(1, NORMAL, "2024-03-01"))
+    assert sched[sched["round"] == 1]["meeting_key"].unique().tolist() == [1]
+
+
+def test_a_cancelled_session_is_not_expected():
+    rows = meeting(1, NORMAL, "2024-03-01")
+    rows[0]["is_cancelled"] = True
+    assert expected_sessions(schedule_of(rows), 2024, 1) == ["FP2", "FP3", "Q", "R"]
+
+
+def test_unknown_session_name_raises():
+    with pytest.raises(ValueError, match="Mystery"):
+        schedule_of(meeting(1, ["Practice 1", "Mystery", "Race"], "2024-03-01"))
+
+
+def test_event_name_falls_back_to_location():
+    sessions = meeting(1, NORMAL, "2024-03-01")
+    assert build_schedule(sessions, [], 2024)["event_name"].unique().tolist() == ["Place 1"]
+
+
+def test_empty_year_gives_an_empty_schedule():
+    assert build_schedule([], [], 2030).empty
+
+
+def test_held_events_excludes_future_events():
+    sched = schedule_of(meeting(1, NORMAL, "2024-03-01"), meeting(2, NORMAL, "2024-09-01"))
     held = held_events(sched, datetime(2024, 6, 1, tzinfo=UTC))
-    assert held["RoundNumber"].tolist() == [1]
+    assert held["round"].unique().tolist() == [1]
 
 
-def test_event_with_race_later_today_is_not_held():
-    sched = schedule(event(2024, 1, NORMAL, "2024-03-01 11:30"))  # race at 2024-03-06 11:30 UTC
-    assert held_events(sched, datetime(2024, 3, 6, 10, 0, tzinfo=UTC)).empty
-    assert len(held_events(sched, datetime(2024, 3, 6, 12, 0, tzinfo=UTC))) == 1
+def test_event_with_race_ending_later_today_is_not_held():
+    sched = schedule_of(meeting(1, NORMAL, "2024-03-01"))  # race on 2024-03-05 from 00:00 to 02:00 UTC
+    assert held_events(sched, datetime(2024, 3, 5, 1, 0, tzinfo=UTC)).empty
+    assert len(held_events(sched, datetime(2024, 3, 5, 3, 0, tzinfo=UTC))) == 5
+
+
+def test_naive_today_is_read_as_utc():
+    sched = schedule_of(meeting(1, NORMAL, "2024-03-01"))
+    assert len(held_events(sched, datetime(2024, 3, 6))) == 5
+
+
+def test_load_schedule_uses_the_sessions_and_meetings_endpoints():
+    sessions, meet = meeting(1, NORMAL, "2024-03-01"), meetings(1)
+    calls = []
+
+    def fake_get(endpoint, **params):
+        calls.append((endpoint, params))
+        return {"sessions": sessions, "meetings": meet}[endpoint]
+
+    sched = load_schedule(2024, fake_get)
+    assert calls == [("sessions", {"year": 2024}), ("meetings", {"year": 2024})]
+    assert expected_sessions(sched, 2024, 1) == ["FP1", "FP2", "FP3", "Q", "R"]
+
+
+def test_load_schedules_joins_years():
+    def fake_get(endpoint, year):
+        rows = meeting(year, NORMAL, f"{year}-03-01")
+        return rows if endpoint == "sessions" else meetings(year)
+
+    sched = load_schedules(2023, 2024, fake_get)
+    assert sorted(sched["year"].unique()) == [2023, 2024]

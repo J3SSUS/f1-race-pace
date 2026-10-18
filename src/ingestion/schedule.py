@@ -1,57 +1,81 @@
-"""Which events were held and which sessions each one has, read from the FastF1 schedule."""
+"""Events, rounds and expected sessions, read from the OpenF1 schedule."""
 
+from collections.abc import Callable
 from datetime import UTC, datetime
 
 import pandas as pd
+
+from ingestion import openf1_client
 
 SESSION_CODES = {
     "Practice 1": "FP1",
     "Practice 2": "FP2",
     "Practice 3": "FP3",
-    "Sprint Qualifying": "SQ",
-    "Sprint Shootout": "SS",
+    "Sprint Qualifying": "SQ",  # OpenF1 uses this name for the 2023 Sprint Shootout too
     "Sprint": "S",
     "Qualifying": "Q",
     "Race": "R",
 }
 
-_SLOTS = range(1, 6)
+COLUMNS = [
+    "year",
+    "round",
+    "event_name",
+    "meeting_key",
+    "session_key",
+    "session",
+    "session_date_utc",
+    "session_end_utc",
+]
 
 
-def load_schedules(first_year: int, last_year: int) -> pd.DataFrame:
-    """Event schedules of several seasons in one frame with a `Year` column, without pre-season testing."""
-    from fastf1.events import get_event_schedule
+def build_schedule(sessions: list[dict], meetings: list[dict], year: int) -> pd.DataFrame:
+    """One row per session of every real event of the year, with its round and code.
 
-    frames = []
-    for year in range(first_year, last_year + 1):
-        schedule = get_event_schedule(year, include_testing=False)
-        frames.append(schedule.assign(Year=year))
-    return pd.concat(frames, ignore_index=True)
+    An event is a meeting with a `Race` session that is not cancelled; the round is the order of those
+    races by date. Pre-season testing (no race) and cancelled events get no round and no rows.
+    """
+    if not sessions:
+        return pd.DataFrame(columns=COLUMNS)
+    df = pd.DataFrame(sessions)
+    df["session_date_utc"] = pd.to_datetime(df["date_start"], utc=True, format="ISO8601")
+    df["session_end_utc"] = pd.to_datetime(df["date_end"], utc=True, format="ISO8601")
+    df = df[~df["is_cancelled"].astype(bool)]
+
+    races = df[df["session_name"] == "Race"].sort_values("session_date_utc")
+    round_of = {meeting: i + 1 for i, meeting in enumerate(races["meeting_key"])}
+    df = df[df["meeting_key"].isin(round_of)].copy()
+
+    unknown = set(df["session_name"]) - set(SESSION_CODES)
+    if unknown:
+        raise ValueError(f"Unknown OpenF1 session names in {year}: {sorted(unknown)}")
+
+    names = {m["meeting_key"]: m.get("meeting_name") for m in meetings}
+    df["year"] = year
+    df["round"] = df["meeting_key"].map(round_of)
+    df["session"] = df["session_name"].map(SESSION_CODES)
+    df["event_name"] = [names.get(k) or loc for k, loc in zip(df["meeting_key"], df["location"], strict=True)]
+    return df.sort_values(["round", "session_date_utc"]).reset_index(drop=True)[COLUMNS]
 
 
-def session_slots(event: pd.Series) -> list[tuple[str, pd.Timestamp]]:
-    """(code, UTC date) of each session of the event, in schedule order."""
-    slots = []
-    for i in _SLOTS:
-        name = event[f"Session{i}"]
-        if name is None or pd.isna(name) or name == "":
-            continue
-        if name not in SESSION_CODES:
-            raise ValueError(f"Unknown session name {name!r} in {event['EventName']} {event.get('Year')}")
-        slots.append((SESSION_CODES[name], event[f"Session{i}DateUtc"]))
-    return slots
+def load_schedule(year: int, get: Callable = openf1_client.get) -> pd.DataFrame:
+    return build_schedule(get("sessions", year=year), get("meetings", year=year), year)
 
 
-def expected_sessions(event: pd.Series) -> list[str]:
-    return [code for code, _ in session_slots(event)]
+def load_schedules(first_year: int, last_year: int, get: Callable = openf1_client.get) -> pd.DataFrame:
+    frames = [load_schedule(year, get) for year in range(first_year, last_year + 1)]
+    return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame(columns=COLUMNS)
+
+
+def expected_sessions(schedule: pd.DataFrame, year: int, round: int) -> list[str]:
+    """Session codes of one event, in schedule order."""
+    event = schedule[(schedule["year"] == year) & (schedule["round"] == round)]
+    return event.sort_values("session_date_utc")["session"].tolist()
 
 
 def held_events(schedule: pd.DataFrame, today: datetime | None = None) -> pd.DataFrame:
-    """Events whose every session started before `today` (UTC), excluding testing (round 0)."""
+    """Rows of the events whose last session ended before `today` (UTC)."""
     now = pd.Timestamp(today or datetime.now(UTC))
-    now = now.tz_convert("UTC").tz_localize(None) if now.tzinfo else now
-    keep = []
-    for _, event in schedule.iterrows():
-        dates = [d for _, d in session_slots(event) if not pd.isna(d)]
-        keep.append(event["RoundNumber"] > 0 and bool(dates) and max(dates) < now)
-    return schedule[keep].reset_index(drop=True)
+    now = now.tz_localize("UTC") if now.tzinfo is None else now.tz_convert("UTC")
+    last_end = schedule.groupby(["year", "round"])["session_end_utc"].transform("max")
+    return schedule[last_end < now].reset_index(drop=True)

@@ -132,9 +132,11 @@ class LoadedSession:
 
 @dataclass
 class IngestResult:
-    year: int; round: int; session: str
+    year: int
+    round: int
+    session: str
     status: Literal["downloaded", "skipped", "failed"]
-    valid: bool | None        # None when failed
+    valid: bool | None  # None when failed
     path: Path
 ```
 

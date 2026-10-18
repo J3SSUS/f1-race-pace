@@ -1,4 +1,4 @@
-"""`ingest_session`: the only ingestion function. One FastF1 session to three Parquets and a `meta.json`."""
+"""`ingest_session`: the only ingestion function. One OpenF1 session to seven Parquets and a `meta.json`."""
 
 import json
 import logging
@@ -7,27 +7,27 @@ import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from importlib.metadata import version
 from pathlib import Path
 from typing import Literal
 
 import pandas as pd
 
 from ingestion.retry import with_backoff
-from ingestion.schemas import validate_tables
+from ingestion.schemas import TABLES, validate_tables
 
 log = logging.getLogger(__name__)
 
 RAW_DIR = Path(__file__).resolve().parents[2] / "data" / "raw"
-TABLES = ("laps", "results", "weather")
+# A session is "not published yet" when these tables both come back empty (OpenF1 answers 404 for no rows)
+CORE_TABLES = ("laps", "session_result")
 
 
 @dataclass
 class LoadedSession:
-    laps: pd.DataFrame
-    results: pd.DataFrame
-    weather: pd.DataFrame
+    tables: dict[str, pd.DataFrame]  # the seven tables of `schemas.TABLES`
     event_name: str
+    session_key: int
+    meeting_key: int
     session_date_utc: pd.Timestamp | None
 
 
@@ -76,7 +76,7 @@ def ingest_session(
         return IngestResult(year, round, session, "skipped", meta["valid"], path)
 
     if loader is None:
-        from ingestion.fastf1_loader import load_session_tables
+        from ingestion.openf1_loader import load_session_tables
 
         loader = load_session_tables
 
@@ -86,23 +86,30 @@ def ingest_session(
         log.warning("%s round %s %s failed after retries: %s", year, round, session, exc)
         return IngestResult(year, round, session, "failed", None, path)
 
+    tables = loaded.tables
+    if all(name in tables and tables[name].empty for name in CORE_TABLES):
+        log.warning("%s round %s %s is not published yet: laps and session_result are empty", year, round, session)
+        return IngestResult(year, round, session, "failed", None, path)
+
     path.mkdir(parents=True, exist_ok=True)
     (path / "meta.json").unlink(missing_ok=True)  # a forced rewrite cut halfway must not look done
-    tables = {name: getattr(loaded, name) for name in TABLES}
-    for name, df in tables.items():
-        df.to_parquet(path / f"{name}.parquet", index=False)
+    for name in TABLES:
+        if name in tables:
+            tables[name].to_parquet(path / f"{name}.parquet", index=False)
 
-    errors = validate_tables(**tables)
+    errors = validate_tables(tables)
     meta = {
         "year": year,
         "round": round,
         "session": session,
         "event_name": loaded.event_name,
+        "session_key": loaded.session_key,
+        "meeting_key": loaded.meeting_key,
         "session_date_utc": _iso(loaded.session_date_utc),
         "run_id": run_id or uuid.uuid4().hex,
-        "fastf1_version": version("fastf1"),
+        "source": "openf1",
         "downloaded_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "rows": {name: len(df) for name, df in tables.items()},
+        "rows": {name: len(tables[name]) for name in TABLES if name in tables},
         "valid": not errors,
         "errors": errors,
     }
