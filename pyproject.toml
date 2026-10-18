@@ -1,0 +1,44 @@
+[project]
+name = "f1-race-pace"
+version = "0.1.0"
+description = "Predicts F1 race pace after Saturday qualifying"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "fastf1==3.8.3",
+    "pandas==2.3.3",
+    "numpy==2.5.4",
+    "pyarrow==25.0.1",
+    "scikit-learn==1.9.1",
+    "xgboost==3.4.1",
+    "lightgbm==4.7.0",
+    "catboost==1.2.10",
+    "optuna==5.0.0",
+    "mlflow==3.17.1",
+    "pandera==0.34.1",
+    "pydantic==2.14.1",
+    "shap==0.53.0",
+    "matplotlib==3.11.2",
+    "jinja2==3.1.6",
+    "markdown==3.11.1",
+    "pyyaml==6.0.3",
+    "supabase==2.33.0",
+    "python-dotenv==1.2.4",
+]
+
+[dependency-groups]
+dev = ["pytest==9.1.1", "ruff==0.17.1", "pre-commit==4.7.0"]
+
+[tool.uv]
+package = false
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]

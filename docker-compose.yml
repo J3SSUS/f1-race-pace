@@ -1,0 +1,38 @@
+# Local stack for phases 0-7. In phase 8 MLflow moves into kind.
+services:
+  mlflow-db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: ${MLFLOW_DB_USER}
+      POSTGRES_PASSWORD: ${MLFLOW_DB_PASSWORD}
+      POSTGRES_DB: ${MLFLOW_DB_NAME}
+    volumes:
+      - mlflow_db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${MLFLOW_DB_USER} -d ${MLFLOW_DB_NAME}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  mlflow:
+    build: ./docker/mlflow
+    depends_on:
+      mlflow-db:
+        condition: service_healthy
+    ports:
+      - "5001:5000"
+    volumes:
+      - mlflow_artifacts:/mlflow/artifacts
+    # Artifacts are served by the server, so clients only need HTTP access, not the volume.
+    command: >
+      mlflow server
+      --host 0.0.0.0
+      --port 5000
+      --backend-store-uri postgresql://${MLFLOW_DB_USER}:${MLFLOW_DB_PASSWORD}@mlflow-db:5432/${MLFLOW_DB_NAME}
+      --artifacts-destination /mlflow/artifacts
+      --serve-artifacts
+      --allowed-hosts "localhost:*,127.0.0.1:*,mlflow:*"
+
+volumes:
+  mlflow_db:
+  mlflow_artifacts:
