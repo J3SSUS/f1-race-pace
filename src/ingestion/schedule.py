@@ -22,6 +22,10 @@ COLUMNS = [
     "round",
     "event_name",
     "meeting_key",
+    "circuit_key",
+    "circuit_short_name",
+    "country_name",
+    "circuit_type",
     "session_key",
     "session",
     "session_date_utc",
@@ -33,7 +37,9 @@ def build_schedule(sessions: list[dict], meetings: list[dict], year: int) -> pd.
     """One row per session of every real event of the year, with its round and code.
 
     An event is a meeting with a `Race` session that is not cancelled; the round is the order of those
-    races by date. Pre-season testing (no race) and cancelled events get no round and no rows.
+    races by date. Pre-season testing (no race) and cancelled events get no round and no rows. The circuit
+    fields come from the sessions (`circuit_key`, `circuit_short_name`, `country_name`) and the meeting
+    (`circuit_type`, OpenF1's own label such as `Permanent`; None when the meeting does not carry it).
     """
     if not sessions:
         return pd.DataFrame(columns=COLUMNS)
@@ -51,9 +57,11 @@ def build_schedule(sessions: list[dict], meetings: list[dict], year: int) -> pd.
         raise ValueError(f"Unknown OpenF1 session names in {year}: {sorted(unknown)}")
 
     names = {m["meeting_key"]: m.get("meeting_name") for m in meetings}
+    circuit_types = {m["meeting_key"]: m.get("circuit_type") for m in meetings}
     df["year"] = year
     df["round"] = df["meeting_key"].map(round_of)
     df["session"] = df["session_name"].map(SESSION_CODES)
+    df["circuit_type"] = df["meeting_key"].map(circuit_types)
     df["event_name"] = [names.get(k) or loc for k, loc in zip(df["meeting_key"], df["location"], strict=True)]
     return df.sort_values(["round", "session_date_utc"]).reset_index(drop=True)[COLUMNS]
 

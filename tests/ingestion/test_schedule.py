@@ -22,6 +22,9 @@ def meeting(key, names, start, cancelled=False, hours=2):
                 "meeting_key": key,
                 "session_name": name,
                 "location": f"Place {key}",
+                "circuit_key": key + 100,
+                "circuit_short_name": f"Circuit {key}",
+                "country_name": f"Country {key}",
                 "date_start": begin.isoformat(),
                 "date_end": (begin + pd.Timedelta(hours, unit="h")).isoformat(),
                 "is_cancelled": cancelled,
@@ -31,7 +34,7 @@ def meeting(key, names, start, cancelled=False, hours=2):
 
 
 def meetings(*keys):
-    return [{"meeting_key": k, "meeting_name": f"Grand Prix {k}"} for k in keys]
+    return [{"meeting_key": k, "meeting_name": f"Grand Prix {k}", "circuit_type": "Permanent"} for k in keys]
 
 
 def schedule_of(*groups, year=2024):
@@ -47,6 +50,22 @@ def test_normal_weekend():
 def test_sprint_weekend_2024():
     sched = schedule_of(meeting(1, SPRINT_2024, "2024-03-01"))
     assert expected_sessions(sched, 2024, 1) == ["FP1", "SQ", "S", "Q", "R"]
+
+
+def test_circuit_fields_come_through_for_a_normal_and_a_sprint_weekend():
+    sched = schedule_of(meeting(1, NORMAL, "2024-03-01"), meeting(2, SPRINT_2024, "2024-03-08"))
+    for round_, key in [(1, 1), (2, 2)]:
+        rows = sched[sched["round"] == round_]
+        assert set(rows["circuit_key"]) == {key + 100}
+        assert set(rows["circuit_short_name"]) == {f"Circuit {key}"}
+        assert set(rows["country_name"]) == {f"Country {key}"}
+        assert set(rows["circuit_type"]) == {"Permanent"}
+
+
+def test_circuit_type_is_none_when_the_meeting_does_not_carry_it():
+    sessions = meeting(1, NORMAL, "2024-03-01")
+    sched = build_schedule(sessions, [{"meeting_key": 1, "meeting_name": "Grand Prix 1"}], 2024)
+    assert sched["circuit_type"].isna().all()
 
 
 def test_sprint_weekend_2023_keeps_openf1_naming():
