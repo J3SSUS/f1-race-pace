@@ -20,3 +20,5 @@ docs/regression_roadmap.md
 catboost_info
 # macOS
 .DS_Store
+
+.claude/settings.local.json
