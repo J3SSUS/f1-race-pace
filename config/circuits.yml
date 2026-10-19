@@ -1,5 +1,6 @@
 # Drafted by scripts/seed_circuits.py from the OpenF1 schedule.
 # circuit_type: street | permanent | hybrid. Replace every `review` by hand; the loader rejects it.
+# Reviewed 2026-10-19: see DECISIONS.md (Spa, hybrids, circuit_key 12).
 - circuit_key: 2
   name: Silverstone
   country: United Kingdom
@@ -15,7 +16,7 @@
 - circuit_key: 7
   name: Spa-Francorchamps
   country: Belgium
-  circuit_type: review
+  circuit_type: permanent
 - circuit_key: 9
   name: Austin
   country: United States
@@ -23,9 +24,9 @@
 - circuit_key: 10
   name: Melbourne
   country: Australia
-  circuit_type: street
+  circuit_type: hybrid
 - circuit_key: 12
-  name: Kuala Lumpur
+  name: Bahrain (OpenF1 key 12)
   country: Bahrain
   circuit_type: permanent
 - circuit_key: 14
@@ -47,7 +48,7 @@
 - circuit_key: 23
   name: Montreal
   country: Canada
-  circuit_type: permanent
+  circuit_type: hybrid
 - circuit_key: 39
   name: Monza
   country: Italy
@@ -95,7 +96,7 @@
 - circuit_key: 151
   name: Miami
   country: United States
-  circuit_type: street
+  circuit_type: hybrid
 - circuit_key: 152
   name: Las Vegas
   country: United States
@@ -103,4 +104,4 @@
 - circuit_key: 153
   name: Madring
   country: Spain
-  circuit_type: street
+  circuit_type: hybrid

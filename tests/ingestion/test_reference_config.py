@@ -7,7 +7,7 @@ import yaml
 from pydantic import ValidationError
 from test_schedule import NORMAL, meeting
 
-from ingestion.reference_config import load_circuits
+from ingestion.reference_config import canonical_team, load_circuits, load_team_aliases
 from ingestion.schedule import build_schedule
 
 SEED_SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "seed_circuits.py"
@@ -111,3 +111,31 @@ def test_seed_does_not_overwrite_a_reviewed_file_without_force(seed, tmp_path):
     assert yaml.safe_load(path.read_text()) == [MONACO]
     assert seed.main(["--force"], **kwargs) == 0
     assert yaml.safe_load(path.read_text())[0]["circuit_key"] == 101
+
+
+def test_repo_teams_file_maps_the_renamed_lineages():
+    aliases = load_team_aliases()
+    assert canonical_team("Alfa Romeo", aliases) == "Kick Sauber"
+    assert canonical_team("AlphaTauri", aliases) == "RB"
+    assert canonical_team("Racing Bulls", aliases) == "RB"
+    assert canonical_team("Kick Sauber", aliases) == "Kick Sauber"
+    assert canonical_team("RB", aliases) == "RB"
+
+
+def test_canonical_team_keeps_a_name_that_is_not_aliased():
+    assert canonical_team("Ferrari", {"Alfa Romeo": "Kick Sauber"}) == "Ferrari"
+    assert canonical_team("Ferrari") == "Ferrari"
+
+
+def test_rejects_a_chained_alias(tmp_path):
+    path = tmp_path / "teams.yml"
+    path.write_text(yaml.safe_dump({"aliases": {"A": "B", "B": "C"}}))
+    with pytest.raises(ValueError, match="also an alias"):
+        load_team_aliases(path)
+
+
+def test_rejects_a_teams_file_without_aliases(tmp_path):
+    path = tmp_path / "teams.yml"
+    path.write_text("Alfa Romeo: Kick Sauber\n")
+    with pytest.raises(ValueError, match="aliases"):
+        load_team_aliases(path)
