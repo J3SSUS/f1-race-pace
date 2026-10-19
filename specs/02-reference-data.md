@@ -1,6 +1,6 @@
 # SPEC 02 — Reference data
 
-> **Status:** Approved
+> **Status:** Implemented
 > **Depends on:** SPEC 01 (raw session ingestion)
 > **Backlog:** Phase 1, task "Reference data" of `docs/backlog.md`
 > **Date:** 2026-10-18
