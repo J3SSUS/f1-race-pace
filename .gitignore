@@ -16,3 +16,7 @@ data/
 
 # Personal reference docs (not part of the project)
 docs/regression_roadmap.md
+
+catboost_info
+# macOS
+.DS_Store
