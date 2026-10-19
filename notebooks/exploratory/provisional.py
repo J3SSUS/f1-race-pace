@@ -5,13 +5,16 @@ Only the train races are ever opened: the oldest `1 - split.test_fraction` of th
 """
 
 import math
+from collections import defaultdict
+from collections.abc import Callable
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
 from common.config import load_config
-from ingestion.reference_config import Circuit, canonical_team
+from ingestion.reference_config import Circuit, canonical_team, load_circuits, load_team_aliases
+from ingestion.schedule import load_schedules
 from ingestion.session import RAW_DIR, session_dir
 
 MIN_CLEAN_LAPS = 10
@@ -20,6 +23,37 @@ CLOSING_FLAGS = {"CLEAR", "GREEN"}
 TRACK_WIDE_FLAGS = {"RED", "YELLOW", "DOUBLE YELLOW"}
 MIN_LONG_RUN = 5
 SLOW_LAP_LIMIT = 1.07  # laps slower than this share of the stint best are ignored in a long run
+FORM_RACES = 3
+OUT_DIR = Path(__file__).resolve().parents[2] / "data" / "exploratory"
+DATASET_PATH = OUT_DIR / "provisional_train.parquet"
+SCHEDULE_PATH = OUT_DIR / "schedule.parquet"
+COLUMNS = [
+    "year",
+    "round",
+    "circuit",
+    "driver",
+    "team",
+    "race_pace_delta_pct",
+    "clean_laps",
+    "is_valid_row",
+    "quali_delta_pct",
+    "grid_position",
+    "reached_q3",
+    "fp_long_run_delta_pct",
+    "fp_tyre_deg",
+    "driver_pace_last3",
+    "team_pace_last3",
+    "teammate_quali_gap",
+    "team_pace_this_circuit_prev",
+    "circuit_type",
+    "track_temp",
+    "air_temp",
+    "rain_flag",
+    "sprint_pace_delta_pct",
+    "is_sprint_weekend",
+    "humidity",
+    "wind_speed",
+]
 
 
 def train_races(
@@ -122,9 +156,9 @@ def qualifying_features(
     """One row per entry of the Q session, with its qualifying features.
 
     Entries are the drivers that also have a `session_result` row, as in `ensure_race_entries`. Columns:
-    `driver`, `team`, `quali_delta_pct` (uncapped, vs pole), `grid_position` (Q position, null if the source has
-    none), `reached_q3` and `teammate_quali_gap` (own best time vs the teammate's, in %; NaN unless the team has
-    exactly two entries, both with a time).
+    `driver_number`, `driver`, `team`, `quali_delta_pct` (uncapped, vs pole), `grid_position` (Q position, null if
+    the source has none), `reached_q3` and `teammate_quali_gap` (own best time vs the teammate's, in %; NaN unless
+    the team has exactly two entries, both with a time).
     """
     entries = drivers[drivers["driver_number"].isin(session_result["driver_number"])]
     entries = entries.drop_duplicates("name_acronym").merge(session_result, on="driver_number")
@@ -134,6 +168,7 @@ def qualifying_features(
     teammate_best = best.groupby(team).transform(lambda times: times.to_numpy()[::-1] if len(times) == 2 else np.nan)
     return pd.DataFrame(
         {
+            "driver_number": entries["driver_number"],
             "driver": entries["name_acronym"],
             "team": team,
             "quali_delta_pct": (best / best.min() - 1) * 100,
@@ -255,3 +290,109 @@ def sprint_features(year: int, round: int, raw_dir: Path = RAW_DIR) -> pd.DataFr
     return race_pace(laps, pit, race_control)[["race_pace_delta_pct"]].rename(
         columns={"race_pace_delta_pct": "sprint_pace_delta_pct"}
     )
+
+
+def form_features(rows: pd.DataFrame, last_n: int = FORM_RACES, min_races: int = 1) -> pd.DataFrame:
+    """`driver_pace_last3`, `team_pace_last3` and `team_pace_this_circuit_prev`, aligned with `rows`.
+
+    `rows` carries `year`, `round`, `driver`, `team`, `circuit_key` and the target. A race only sees the races
+    before it: the history is updated after the race's rows are read, never before. The driver form is the mean
+    target of the driver's last `last_n` valid rows; the team form is the mean of the team's last `last_n`
+    race means. With fewer than `min_races` earlier values the feature is NaN. The circuit feature is the mean
+    target of the team at the same circuit in the previous year (NaN if it was not raced there).
+    """
+    driver_history = defaultdict(list)
+    team_history = defaultdict(list)
+    circuit_history = {}  # (team, circuit_key, year) -> mean target of the team in that race
+
+    def recent(values: list[float]) -> float:
+        return float(np.mean(values[-last_n:])) if len(values) >= min_races else np.nan
+
+    out = pd.DataFrame(
+        index=rows.index, columns=["driver_pace_last3", "team_pace_last3", "team_pace_this_circuit_prev"]
+    )
+    out = out.astype(float)
+    for (year, _), race in rows.sort_values(["year", "round"], kind="stable").groupby(["year", "round"]):
+        key = race["circuit_key"].iloc[0]
+        for index, row in race.iterrows():
+            out.loc[index, "driver_pace_last3"] = recent(driver_history[row["driver"]])
+            out.loc[index, "team_pace_last3"] = recent(team_history[row["team"]])
+            out.loc[index, "team_pace_this_circuit_prev"] = circuit_history.get((row["team"], key, year - 1), np.nan)
+        valid = race.dropna(subset=["race_pace_delta_pct"])
+        for row in valid.itertuples():
+            driver_history[row.driver].append(row.race_pace_delta_pct)
+        for team, team_rows in valid.groupby("team"):
+            mean = float(team_rows["race_pace_delta_pct"].mean())
+            team_history[team].append(mean)
+            circuit_history[(team, key, year)] = mean
+    return out
+
+
+def race_rows(
+    year: int, round: int, raw_dir: Path, circuit_key: int, circuits: dict[int, Circuit], aliases: dict[str, str]
+) -> pd.DataFrame:
+    """One row per entry of the Q session of a race, with everything that is not form."""
+    session_result, drivers, weather = read_tables(year, round, "Q", ("session_result", "drivers", "weather"), raw_dir)
+    laps, pit, race_control = read_tables(year, round, "R", ("laps", "pit", "race_control"), raw_dir)
+    rows = qualifying_features(session_result, drivers, aliases)
+    number = rows["driver_number"]
+
+    pace = race_pace(laps, pit, race_control)
+    rows["clean_laps"] = number.map(pace["clean_laps"]).fillna(0).astype(int)
+    rows["is_valid_row"] = rows["quali_delta_pct"].notna() & (rows["clean_laps"] >= MIN_CLEAN_LAPS)
+    rows["race_pace_delta_pct"] = number.map(pace["race_pace_delta_pct"]).where(rows["is_valid_row"])
+
+    for features in (fp2_features(year, round, raw_dir), sprint_features(year, round, raw_dir)):
+        for column in features.columns:
+            rows[column] = number.map(features[column])
+    for name, value in (weather_features(weather) | circuit_features(circuit_key, circuits)).items():
+        rows[name] = value
+    rows["is_sprint_weekend"] = is_sprint_weekend(year, round, raw_dir)
+    rows["year"], rows["round"], rows["circuit_key"] = year, round, circuit_key
+    return rows
+
+
+def cached_schedule(
+    path: Path = SCHEDULE_PATH,
+    first_year: int | None = None,
+    last_year: int | None = None,
+    load: Callable = load_schedules,
+) -> pd.DataFrame:
+    """The OpenF1 schedule of the training years, fetched once and kept in `path`."""
+    if path.exists():
+        return pd.read_parquet(path)
+    config = load_config()
+    schedule = load(first_year or config.data.first_year, last_year or config.data.last_year)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    schedule.to_parquet(path)
+    return schedule
+
+
+def build_train_dataset(
+    raw_dir: Path = RAW_DIR,
+    out_path: Path | None = DATASET_PATH,
+    schedule: pd.DataFrame | None = None,
+    circuits: dict[int, Circuit] | None = None,
+    aliases: dict[str, str] | None = None,
+    test_fraction: float | None = None,
+) -> pd.DataFrame:
+    """The provisional dataset of the train races, one row per driver and race, written to `out_path`.
+
+    Invalid rows stay, with an empty target. Nothing but the train races is read: the races come from
+    `train_races`, and the schedule only supplies their circuit.
+    """
+    races = train_races(raw_dir, test_fraction)
+    schedule = cached_schedule() if schedule is None else schedule
+    circuit_of = schedule.drop_duplicates(["year", "round"]).set_index(["year", "round"])["circuit_key"]
+    circuits = load_circuits() if circuits is None else circuits
+    aliases = load_team_aliases() if aliases is None else aliases
+
+    rows = pd.concat(
+        [race_rows(y, r, raw_dir, int(circuit_of[(y, r)]), circuits, aliases) for y, r in races], ignore_index=True
+    )
+    rows[["driver_pace_last3", "team_pace_last3", "team_pace_this_circuit_prev"]] = form_features(rows)
+    rows = rows[COLUMNS]
+    if out_path is not None:
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        rows.to_parquet(out_path)
+    return rows

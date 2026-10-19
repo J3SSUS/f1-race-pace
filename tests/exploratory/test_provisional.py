@@ -2,6 +2,9 @@ import numpy as np
 import pandas as pd
 import pytest
 from provisional import (
+    COLUMNS,
+    build_train_dataset,
+    cached_schedule,
     circuit_features,
     clean_laps,
     fp2_features,
@@ -450,3 +453,164 @@ def test_sprint_pace_uses_the_target_formula_on_the_s_session(tmp_path):
 def test_sprint_pace_is_empty_on_a_normal_weekend(tmp_path):
     write_session(tmp_path, 2024, 1, "R")
     assert sprint_features(2024, 1, tmp_path).empty
+
+
+TEAM_OF = {1: "Ferrari", 2: "Ferrari", 3: "McLaren", 4: "McLaren"}
+CIRCUITS = {
+    1: Circuit(circuit_key=1, name="Monaco", country="Monaco", circuit_type="street"),
+    2: Circuit(circuit_key=2, name="Silverstone", country="United Kingdom", circuit_type="permanent"),
+}
+
+
+def write_weekend(raw_dir, year, round, pace: dict[int, float], laps_of: dict[int, int] | None = None):
+    """A Q and an R session. Driver n sets a qualifying time of `pace[n]` and runs a clean lap of `pace[n]` seconds
+    in every lap after the first, `laps_of[n]` laps in all (12 by default)."""
+    laps_of = {n: 12 for n in pace} | (laps_of or {})
+    order = sorted(pace, key=pace.get)
+    session_result = pd.DataFrame(
+        {
+            "driver_number": order,
+            "position": pd.array(range(1, len(order) + 1), dtype="Int64"),
+            "duration": [np.array([pace[n], pace[n], pace[n]]) for n in order],
+        }
+    )
+    drivers = pd.DataFrame(
+        {"driver_number": list(pace), "name_acronym": [f"D{n}" for n in pace], "team_name": [TEAM_OF[n] for n in pace]}
+    )
+    weather = pd.DataFrame(
+        {
+            "track_temperature": [40.0],
+            "air_temperature": [20.0],
+            "humidity": [50.0],
+            "wind_speed": [1.0],
+            "rainfall": [0],
+        }
+    )
+    laps = pd.concat([driver_laps(n, dict.fromkeys(range(1, laps_of[n] + 1), pace[n])) for n in pace])
+    write_session(raw_dir, year, round, "Q", session_result=session_result, drivers=drivers, weather=weather)
+    write_session(raw_dir, year, round, "R", laps=laps, pit=NO_PIT, race_control=NO_CONTROL)
+
+
+def schedule_for(*races: tuple[int, int, int]) -> pd.DataFrame:
+    return pd.DataFrame(races, columns=["year", "round", "circuit_key"])
+
+
+def build(raw_dir, schedule, test_fraction=0.2, out_path=None):
+    return build_train_dataset(
+        raw_dir, out_path, schedule, CIRCUITS, {}, test_fraction=test_fraction
+    )  # fmt: skip
+
+
+def test_dataset_has_one_row_per_driver_and_train_race_with_exactly_the_columns(tmp_path):
+    held = [(2023, r) for r in range(1, 6)]
+    for year, round in held:
+        write_weekend(tmp_path, year, round, {1: 90.0, 2: 90.5, 3: 91.0, 4: 91.5})
+    data = build(tmp_path, schedule_for(*[(y, r, 1) for y, r in held]), test_fraction=0.2)  # 4 train races
+    assert list(data.columns) == COLUMNS
+    assert len(data) == 16
+    assert not data.duplicated(["year", "round", "driver"]).any()
+    assert data["round"].max() == 4
+
+
+def test_invalid_rows_stay_with_an_empty_target_and_valid_rows_have_ten_clean_laps(tmp_path):
+    write_weekend(tmp_path, 2023, 1, {1: 90.0, 2: 90.5, 3: 91.0, 4: 91.5}, laps_of={4: 8})  # 7 clean laps
+    write_weekend(tmp_path, 2023, 2, {1: 90.0, 2: 90.5, 3: 91.0, 4: 91.5})  # test race
+    data = build(tmp_path, schedule_for((2023, 1, 1), (2023, 2, 1)), test_fraction=0.5)
+    by_driver = data.set_index("driver")
+    assert by_driver.loc["D4", "clean_laps"] == 7
+    assert not by_driver.loc["D4", "is_valid_row"]
+    assert pd.isna(by_driver.loc["D4", "race_pace_delta_pct"])
+    assert by_driver.loc["D1", "is_valid_row"]
+    assert (by_driver.loc[by_driver["is_valid_row"], "clean_laps"] >= 10).all()
+    assert by_driver.loc[~by_driver["is_valid_row"], "race_pace_delta_pct"].isna().all()
+
+
+def test_form_features_only_see_earlier_races(tmp_path):
+    held = [(2023, r) for r in range(1, 7)]
+    paces = [90.0, 91.0, 92.0, 93.0, 94.0, 95.0]
+    for (year, round), base in zip(held, paces, strict=True):
+        write_weekend(tmp_path, year, round, {1: base, 2: base + 0.5, 3: base + 1.0, 4: base + 1.5})
+    data = build(tmp_path, schedule_for(*[(y, r, 1) for y, r in held]), test_fraction=0.01)  # 5 train races
+    d1 = data[data["driver"] == "D1"].set_index("round")
+
+    assert d1.loc[1, ["driver_pace_last3", "team_pace_last3"]].isna().all()
+    target = d1["race_pace_delta_pct"]
+    assert d1.loc[2, "driver_pace_last3"] == pytest.approx(target[1])
+    assert d1.loc[3, "driver_pace_last3"] == pytest.approx(np.mean([target[1], target[2]]))
+    assert d1.loc[5, "driver_pace_last3"] == pytest.approx(np.mean([target[2], target[3], target[4]]))
+    assert 6 not in d1.index  # the last held race is test and never appears
+
+
+def test_team_form_is_the_mean_of_the_teams_last_race_means(tmp_path):
+    for round, base in ((1, 90.0), (2, 91.0), (3, 92.0)):
+        write_weekend(tmp_path, 2023, round, {1: base, 2: base + 1.0, 3: base + 0.2, 4: base + 1.2})
+    data = build(tmp_path, schedule_for(*[(2023, r, 1) for r in (1, 2, 3)]), test_fraction=0.01).set_index(
+        ["round", "driver"]
+    )
+    ferrari_race_1 = data.loc[[(1, "D1"), (1, "D2")], "race_pace_delta_pct"].mean()
+    assert data.loc[(2, "D1"), "team_pace_last3"] == pytest.approx(ferrari_race_1)
+    assert data.loc[(2, "D2"), "team_pace_last3"] == pytest.approx(ferrari_race_1)
+
+
+def test_team_pace_at_the_same_circuit_comes_from_the_previous_year(tmp_path):
+    held = [
+        (2023, 1, 1),
+        (2023, 2, 2),
+        (2024, 1, 1),
+        (2024, 2, 2),
+        (2024, 3, 2),
+        (2024, 4, 1),
+        (2024, 5, 1),
+    ]  # the last two are test
+    for year, round, _ in held:
+        write_weekend(tmp_path, year, round, {1: 90.0 + year - 2023, 2: 90.5, 3: 91.0, 4: 91.5})
+    data = build(tmp_path, schedule_for(*held), test_fraction=0.2).set_index(["year", "round", "driver"])
+    prev = data.loc[(2023, 1)]
+    ferrari_2023 = prev.loc[["D1", "D2"], "race_pace_delta_pct"].mean()
+    assert (
+        data.loc[(2023, 1, "D1"), "team_pace_this_circuit_prev"]
+        != data.loc[(2023, 1, "D1"), "team_pace_this_circuit_prev"]
+    )
+    assert data.loc[(2024, 1, "D1"), "team_pace_this_circuit_prev"] == pytest.approx(ferrari_2023)
+    assert data.loc[(2024, 1, "D2"), "team_pace_this_circuit_prev"] == pytest.approx(ferrari_2023)
+    # round 3 of 2024 is at circuit 2 as round 2; the previous year's circuit 2 race is 2023 round 2
+    ferrari_2023_r2 = data.loc[(2023, 2)].loc[["D1", "D2"], "race_pace_delta_pct"].mean()
+    assert data.loc[(2024, 3, "D1"), "team_pace_this_circuit_prev"] == pytest.approx(ferrari_2023_r2)
+
+
+def test_dataset_opens_no_file_of_a_test_race_or_of_2026(tmp_path, monkeypatch):
+    train = [(2023, r) for r in range(1, 5)]
+    for year, round in train:
+        write_weekend(tmp_path, year, round, {1: 90.0, 2: 90.5, 3: 91.0, 4: 91.5})
+    make_races(tmp_path, (2023, 5), (2026, 1))  # held but not train: no Parquets at all
+
+    opened = []
+    real = pd.read_parquet
+    monkeypatch.setattr(pd, "read_parquet", lambda path, *a, **k: (opened.append(path), real(path, *a, **k))[1])
+    build(tmp_path, schedule_for(*[(y, r, 1) for y, r in [*train, (2023, 5), (2026, 1)]]), test_fraction=0.2)
+
+    assert opened
+    assert {p.parent.parent.name for p in opened} == {"01", "02", "03", "04"}
+    assert {p.parent.parent.parent.name for p in opened} == {"2023"}
+
+
+def test_dataset_is_written_to_the_out_path(tmp_path):
+    for round in (1, 2):
+        write_weekend(tmp_path / "raw", 2023, round, {1: 90.0, 2: 90.5, 3: 91.0, 4: 91.5})
+    out = tmp_path / "out" / "provisional_train.parquet"
+    data = build(tmp_path / "raw", schedule_for((2023, 1, 1), (2023, 2, 1)), test_fraction=0.5, out_path=out)
+    pd.testing.assert_frame_equal(pd.read_parquet(out), data, check_dtype=False)
+
+
+def test_schedule_is_fetched_once_and_then_read_from_the_cache(tmp_path):
+    calls = []
+
+    def load(first, last):
+        calls.append((first, last))
+        return schedule_for((2023, 1, 1))
+
+    path = tmp_path / "exploratory" / "schedule.parquet"
+    first = cached_schedule(path, 2023, 2025, load)
+    second = cached_schedule(path, 2023, 2025, load)
+    assert calls == [(2023, 2025)]
+    pd.testing.assert_frame_equal(first, second)
