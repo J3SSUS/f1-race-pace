@@ -11,12 +11,15 @@ import numpy as np
 import pandas as pd
 
 from common.config import load_config
-from ingestion.session import RAW_DIR
+from ingestion.reference_config import Circuit, canonical_team
+from ingestion.session import RAW_DIR, session_dir
 
 MIN_CLEAN_LAPS = 10
 # Flags of `race_control` that open or close a neutralised stretch of the whole track
 CLOSING_FLAGS = {"CLEAR", "GREEN"}
 TRACK_WIDE_FLAGS = {"RED", "YELLOW", "DOUBLE YELLOW"}
+MIN_LONG_RUN = 5
+SLOW_LAP_LIMIT = 1.07  # laps slower than this share of the stint best are ignored in a long run
 
 
 def train_races(
@@ -105,3 +108,150 @@ def race_pace(
     driver_median = clean.groupby("driver_number")["lap_duration"].median().reindex(eligible)
     target = (driver_median / field_median - 1) * 100
     return pd.DataFrame({"race_pace_delta_pct": target.reindex(counts.index), "clean_laps": counts})
+
+
+def best_quali_time(durations) -> float:
+    """Best of the three Q durations of `session_result` (NaN where the driver did not set one)."""
+    times = np.asarray(durations, dtype=float)
+    return float(np.nanmin(times)) if not np.isnan(times).all() else np.nan
+
+
+def qualifying_features(
+    session_result: pd.DataFrame, drivers: pd.DataFrame, aliases: dict[str, str] | None = None
+) -> pd.DataFrame:
+    """One row per entry of the Q session, with its qualifying features.
+
+    Entries are the drivers that also have a `session_result` row, as in `ensure_race_entries`. Columns:
+    `driver`, `team`, `quali_delta_pct` (uncapped, vs pole), `grid_position` (Q position, null if the source has
+    none), `reached_q3` and `teammate_quali_gap` (own best time vs the teammate's, in %; NaN unless the team has
+    exactly two entries, both with a time).
+    """
+    entries = drivers[drivers["driver_number"].isin(session_result["driver_number"])]
+    entries = entries.drop_duplicates("name_acronym").merge(session_result, on="driver_number")
+    best = entries["duration"].map(best_quali_time)
+    team = entries["team_name"].map(lambda name: canonical_team(name, aliases))
+
+    teammate_best = best.groupby(team).transform(lambda times: times.to_numpy()[::-1] if len(times) == 2 else np.nan)
+    return pd.DataFrame(
+        {
+            "driver": entries["name_acronym"],
+            "team": team,
+            "quali_delta_pct": (best / best.min() - 1) * 100,
+            "grid_position": entries["position"].astype("Int64"),
+            "reached_q3": entries["duration"].map(lambda d: int(not np.isnan(d[2]))),
+            "teammate_quali_gap": (best / teammate_best - 1) * 100,
+        }
+    ).reset_index(drop=True)
+
+
+def weather_features(weather: pd.DataFrame) -> dict[str, float]:
+    """Means over the Q session, and `rain_flag` = 1 if it rained at any point. `humidity` and `wind_speed` are
+    exploration only (not in the feature catalog)."""
+    if weather.empty:
+        return dict.fromkeys(["track_temp", "air_temp", "humidity", "wind_speed", "rain_flag"], np.nan)
+    return {
+        "track_temp": float(weather["track_temperature"].mean()),
+        "air_temp": float(weather["air_temperature"].mean()),
+        "humidity": float(weather["humidity"].mean()),
+        "wind_speed": float(weather["wind_speed"].mean()),
+        "rain_flag": int((weather["rainfall"] > 0).any()),
+    }
+
+
+def circuit_features(circuit_key: int, circuits: dict[int, Circuit]) -> dict[str, str]:
+    """The stored circuit name and its `circuit_type` from `config/circuits.yml`."""
+    circuit = circuits[circuit_key]
+    return {"circuit": circuit.name, "circuit_type": circuit.circuit_type}
+
+
+def is_sprint_weekend(year: int, round: int, raw_dir: Path = RAW_DIR) -> int:
+    """1 if the event has an `S` session on disk (looks at the path, opens nothing)."""
+    return int((raw_dir / str(year) / f"{round:02d}" / "S" / "meta.json").exists())
+
+
+def no_drivers(*columns: str) -> pd.DataFrame:
+    """An empty per-driver table, so a missing session reindexes to NaN."""
+    return pd.DataFrame(columns=list(columns), index=pd.Index([], name="driver_number"), dtype=float)
+
+
+def read_tables(year: int, round: int, session: str, tables: tuple[str, ...], raw_dir: Path = RAW_DIR):
+    """The listed Parquets of one session, in order. The only place the builder reads session files."""
+    folder = session_dir(year, round, session, raw_dir)
+    return [pd.read_parquet(folder / f"{table}.parquet") for table in tables]
+
+
+def long_runs(
+    laps: pd.DataFrame,
+    pit: pd.DataFrame,
+    race_control: pd.DataFrame,
+    stints: pd.DataFrame,
+    min_run: int = MIN_LONG_RUN,
+    slow_limit: float = SLOW_LAP_LIMIT,
+) -> list[pd.DataFrame]:
+    """Long runs of a practice session: at least `min_run` consecutive clean laps in one stint (one compound).
+
+    Laps slower than `slow_limit` times the best clean lap of their stint are ignored, and an ignored lap breaks
+    the run. Each run has `driver_number`, `lap_number` and `lap_duration`.
+    """
+    clean = clean_laps(laps, pit, race_control).sort_values("lap_number")
+    stints = stints.dropna(subset=["compound"]).sort_values("lap_start")
+    clean = pd.merge_asof(
+        clean, stints[["driver_number", "lap_start", "stint_number"]].astype({"lap_start": "int64"}),
+        left_on="lap_number", right_on="lap_start", by="driver_number",
+    ).dropna(subset=["stint_number"])  # fmt: skip
+    best = clean.groupby(["driver_number", "stint_number"])["lap_duration"].transform("min")
+    quick = clean[clean["lap_duration"] <= slow_limit * best]
+
+    runs = []
+    for _, stint in quick.groupby(["driver_number", "stint_number"]):
+        run_id = (stint["lap_number"].diff() != 1).cumsum()
+        runs += [run for _, run in stint.groupby(run_id) if len(run) >= min_run]
+    return [run[["driver_number", "lap_number", "lap_duration"]] for run in runs]
+
+
+def practice_features(
+    laps: pd.DataFrame, pit: pd.DataFrame, race_control: pd.DataFrame, stints: pd.DataFrame
+) -> pd.DataFrame:
+    """Per driver with a long run: `fp_long_run_delta_pct` and `fp_tyre_deg`.
+
+    The first is the driver's median long-run lap against the median of every long-run lap of the field, in %.
+    The second is the slope of lap time over lap number in the driver's longest run, in seconds per lap (no fuel
+    correction). Drivers without a long run are not in the result.
+    """
+    runs = long_runs(laps, pit, race_control, stints)
+    if not runs:
+        return no_drivers("fp_long_run_delta_pct", "fp_tyre_deg")
+    pooled = pd.concat(runs)
+    field_median = pooled["lap_duration"].median()
+    delta = (pooled.groupby("driver_number")["lap_duration"].median() / field_median - 1) * 100
+
+    longest = {}
+    for run in runs:  # the first of equally long runs wins
+        driver = run["driver_number"].iloc[0]
+        if driver not in longest or len(run) > len(longest[driver]):
+            longest[driver] = run
+    deg = pd.Series({d: np.polyfit(r["lap_number"], r["lap_duration"], 1)[0] for d, r in longest.items()})
+    return pd.DataFrame({"fp_long_run_delta_pct": delta, "fp_tyre_deg": deg})
+
+
+def fp2_features(year: int, round: int, raw_dir: Path = RAW_DIR) -> pd.DataFrame:
+    """`practice_features` of the FP2 of an event. Empty on sprint weekends (no FP2) and when FP2 is not on disk."""
+    fp2 = session_dir(year, round, "FP2", raw_dir)
+    if is_sprint_weekend(year, round, raw_dir) or not (fp2 / "meta.json").exists():
+        return no_drivers("fp_long_run_delta_pct", "fp_tyre_deg")
+    laps, pit, race_control, stints = read_tables(
+        year, round, "FP2", ("laps", "pit", "race_control", "stints"), raw_dir
+    )
+    return practice_features(laps, pit, race_control, stints)
+
+
+def sprint_features(year: int, round: int, raw_dir: Path = RAW_DIR) -> pd.DataFrame:
+    """`sprint_pace_delta_pct` per driver, with the same function as the target on the `S` session.
+
+    Empty on normal weekends. Sprint races run on Saturday, so they are known before the race."""
+    if not is_sprint_weekend(year, round, raw_dir):
+        return no_drivers("sprint_pace_delta_pct")
+    laps, pit, race_control = read_tables(year, round, "S", ("laps", "pit", "race_control"), raw_dir)
+    return race_pace(laps, pit, race_control)[["race_pace_delta_pct"]].rename(
+        columns={"race_pace_delta_pct": "sprint_pace_delta_pct"}
+    )
