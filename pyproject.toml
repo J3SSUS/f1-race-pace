@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Predicts F1 race pace after Saturday qualifying"
 requires-python = ">=3.12,<3.13"
 dependencies = [
-    "fastf1==3.8.3",
+    "requests==2.34.2",
     "pandas==2.3.3",
     "numpy==2.5.4",
     "pyarrow==25.0.1",

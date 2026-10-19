@@ -28,7 +28,7 @@
 
   <!-- external sources and destinations -->
   <rect class="box" x="16" y="48" width="136" height="56" rx="8"/>
-  <text class="ink" x="84" y="72" text-anchor="middle">FastF1</text>
+  <text class="ink" x="84" y="72" text-anchor="middle">OpenF1</text>
   <text class="sub" x="84" y="88" text-anchor="middle">Race data</text>
 
   <rect class="box" x="172" y="48" width="136" height="56" rx="8"/>

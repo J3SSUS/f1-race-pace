@@ -10,7 +10,7 @@ Closed decisions:
 
 - Orchestration: Airflow with `KubernetesPodOperator` on kind (machine with 16 GB or more).
 - Three DAGs: training, prediction (every Saturday after qualifying) and ground truth (after each race), run on demand from the local machine. No API: FastAPI is an optional extra.
-- Data: seasons 2022 to 2027, with raw data in local Parquet and everything calculated (features, target, predictions, metrics) in Supabase. Chronological 80/20 train/test split by race (no separate validation set; model selection uses temporal cross-validation inside train) and walk-forward retraining in 2026, with a shadow model without 2026 for comparison. With about 6 races of 2026 left on 2026-10-15, 2026 is a backtest and live predictions start with 2027 (the last 2026 races live only if the pipeline is ready in time).
+- Data: seasons 2023 to 2027 from OpenF1 (free; it has no 2022 data), with raw data in local Parquet and everything calculated (features, target, predictions, metrics) in Supabase. Chronological 80/20 train/test split by race (no separate validation set; model selection uses temporal cross-validation inside train) and walk-forward retraining in 2026, with a shadow model without 2026 for comparison. With about 6 races of 2026 left on 2026-10-15, 2026 is a backtest and live predictions start with 2027 (the last 2026 races live only if the pipeline is ready in time).
 - Evidently, retraining trigger and GitHub Actions: after the core.
 - Zero cost: public repository and GitHub Pages for the page.
 - Out of scope: Kubeflow, MinIO, Prometheus/Grafana, Helm, cloud and betting.
@@ -27,7 +27,7 @@ These contracts do not change without first recording it in `DECISIONS.md`.
 | Valid rows | A row is dropped without qualifying or with fewer than 10 clean laps; that rule lives in features, not in the models. Predictions are made for every entry, but metrics count only rows with `is_valid_row = true` |
 | Missing values | Imputation of practice, sprint and form features lives inside each model's pipeline, as an Optuna hyperparameter |
 | Metric | MAE as the main one, always compared against the qualifying baseline: a linear regression of the target on `quali_delta_pct`, fitted on train |
-| Split | Chronological 80/20 by race: the oldest 80% of races is train, the most recent 20% is test (all rows of a race stay together). No validation set: models and Optuna trials are compared with temporal cross-validation inside train; test is touched only once, to report the final metric. The split is defined in the config and applied by the `sampling` step of the training DAG; later steps read it and nobody redefines it. The first model trains on 2022–2025 (80/20 inside that range), so test stays out of the 2026 regulations; 2026 is walk-forward from round 1 and the shadow is the first model, frozen. Each retraining takes every race available up to its cutoff and applies the same 80/20; only races prior to the one being predicted are included |
+| Split | Chronological 80/20 by race: the oldest 80% of races is train, the most recent 20% is test (all rows of a race stay together). No validation set: models and Optuna trials are compared with temporal cross-validation inside train; test is touched only once, to report the final metric. The split is defined in the config and applied by the `sampling` step of the training DAG; later steps read it and nobody redefines it. The first model trains on 2023–2025 (80/20 inside that range), so test stays out of the 2026 regulations; 2026 is walk-forward from round 1 and the shadow is the first model, frozen. Each retraining takes every race available up to its cutoff and applies the same 80/20; only races prior to the one being predicted are included |
 | Data between steps | Raw data in local Parquet, written by the `sampling` step and registered in MLflow as train and test datasets (path, digest, rows and races); calculated features and results in Supabase tables with a fixed Pandera schema. Training reads features from Supabase, with no second copy in Parquet |
 | Champion | `champion` alias in the MLflow registry. The first champion is promoted by hand after reviewing the evaluation. After a retraining it is promoted automatically, only if test MAE improves by 2% or more and that improvement holds over the last 5 races. The challenger's mean MAE over the last 5 races must be at most 0.98 × the champion's on the same races and not worse in at least 3 of the 5. Promotion is a local script (`scripts/promote.py`), not part of training or evaluation, and never runs in GitHub Actions. The prediction DAG loads only that alias |
 | Output | The `predictions` table in Supabase, with key `(entry_id, model_version)` (an entry is one driver in one race). The prediction DAG inserts the predicted pace; the ground truth DAG inserts the actual value in `ground_truth`, and the error is derived in the `prediction_results` view. See `data_model.md` |
@@ -65,13 +65,13 @@ Identification columns (they do not predict): `year`, `round`, `circuit`, `drive
 
 Feature definitions (initial; the EDA can tune them, and any change goes in `DECISIONS.md`):
 
-- **Clean lap:** lap number above 1, no pit in or out, `TrackStatus == "1"` (green flag only), `IsAccurate` and a recorded lap time. The field is the pooled clean laps of drivers with at least 10 of them. Wet races get no special treatment.
+- **Clean lap:** lap number above 1, not a pit-out lap, no pit stop in the lap, a recorded lap time, and no safety car, virtual safety car, red flag or track-wide yellow during the lap. The intervals come from OpenF1 `race_control`: one opens at the flag or the "DEPLOYED" message and closes at the next track-scope `CLEAR` or `GREEN`; sector yellows do not count. The field is the pooled clean laps of drivers with at least 10 of them. Wet races get no special treatment.
 - **Qualifying:** `quali_delta_pct` is capped at 3%, because rain or red flags create gaps up to ~15% that models cannot extrapolate.
 - **Practice:** a long run is at least 5 consecutive clean laps on one compound in FP2, ignoring laps slower than 107% of the stint best. `fp_tyre_deg` is the slope of lap time over lap number in the longest long run. No fuel correction.
 - **Sprint weekends:** there is no FP2, so the sprint replaces it: `sprint_pace_delta_pct` uses the same formula as the target. The FP2 features come in empty (NaN) and each model's pipeline fills them.
 - **Weather:** from the qualifying session, since there is no forecast of Sunday: means of `track_temp` and `air_temp`, and `rain_flag` is 1 if it rained at any point.
 - **Form:** `driver_pace_last3` and `team_pace_last3` use the previous 3 valid races and cross seasons, but not the 2025→2026 regulation change, so the first 2026 races come in empty. `teammate_quali_gap` compares this qualifying with the teammate's, in %.
-- **Circuit:** `circuit_type` comes from a `circuits.yml` in the repository (street, permanent, hybrid). `team_pace_this_circuit_prev` is NaN for a circuit not raced the previous year and for all 2026 rows. `regulation_era` is not included, because it is constant in training from 2022 onward.
+- **Circuit:** `circuit_type` comes from a `circuits.yml` in the repository (street, permanent, hybrid). `team_pace_this_circuit_prev` is NaN for a circuit not raced the previous year and for all 2026 rows. `regulation_era` is not included, because it is constant in training from 2023 onward.
 
 ## Scope by stage
 
@@ -131,7 +131,7 @@ To avoid depending on a site generator, the page is built with Jinja2 and Python
 
 The core is phases 1 to 8; phase 9 comes after. A phase does not start until the previous one is met. `backlog.md` breaks each phase into tasks.
 
-1. **Ingestion**: done when one idempotent ingestion function (shared by the sampling step and the prediction and ground truth DAGs) downloads seasons 2022–2027 to local Parquet, session coverage is at least 95% and there is a report of the missing races.
+1. **Ingestion**: done when one idempotent ingestion function (shared by the sampling step and the prediction and ground truth DAGs) downloads seasons 2023–2027 from OpenF1 to local Parquet, session coverage is at least 95% and there is a report of the missing races.
 2. **EDA**: done when the target, missing values, correlations and the qualifying baseline have been reviewed on the train portion only, and any resulting decision is in `DECISIONS.md`. It is a manual notebook and does not run in the DAGs.
 3. **Sampling and preprocess**: done when the sampling step ingests, splits chronologically and registers the train and test Parquets in MLflow, there is one row per driver and race, the Pandera schema passes, a test confirms no feature uses Sunday data, the target function is tested against known races, the valid-row rule drops anyone without qualifying or 10 clean laps, and the features of all seasons are loaded in Supabase.
 4. **Training**: done when the baseline and the 6 models have their runs logged in MLflow, reading features from Supabase, with temporal split, imputation inside the pipeline and comparable MAE. Training does not promote anything.
@@ -147,15 +147,15 @@ The biggest risk is getting stuck because of the data or a tool that changes, so
 
 | Risk | Mitigation |
 | --- | --- |
-| FastF1 ingestion fails halfway and leaves sessions unloaded | Retries with backoff, local cache and a coverage check with Pandera that lists what is missing |
+| OpenF1 ingestion fails halfway, or a session is not published yet (OpenF1 restricts access during a session and for about 30 minutes after it) | Retries with backoff, one folder per session with `meta.json` written last, and a coverage check with Pandera that lists what is missing |
 | Qualifying or race data takes time to become available after the session | The DAGs retry with backoff and run on demand |
 | Supabase pauses the project after a week without use and the page is left without data | The page falls back to `snapshot.json` in the repository when the query fails; between seasons the project is reactivated by hand |
 | The Supabase anonymous key is exposed in the page | Read-only RLS policies; the service key lives only on the local machine, outside the repository |
 | In 2026 F1 does not publish active aerodynamics or ERS data, and DRS comes in empty | No feature uses them |
 | The 2026 regulations change how the cars behave | Walk-forward retraining and a shadow model without 2026 for comparison |
 | A row uses Sunday data (leakage) | Automated test and form features computed only from previous races |
-| Few rows (around 1,800) | Simple models, temporal cross-validation inside train in Optuna and an honest report against the baseline |
-| Version changes in FastF1 | Version pinned in `pyproject.toml` and updated deliberately |
+| Few rows (around 1,400) | Simple models, temporal cross-validation inside train in Optuna and an honest report against the baseline |
+| OpenF1 changes or stops receiving data (it depends on F1's feed, which now requires a paid subscription for the archive) | All history is saved to local Parquet, so training does not depend on the service; the first live check is the Austin 2026 qualifying |
 | Tools that stop being maintained (MkDocs Material, MinIO) | They are not used: Jinja2 for the page and a persistent volume for the artifacts |
 | The 2026 season ends before the pipeline is ready | 2026 becomes a walk-forward backtest and live predictions start with 2027 |
 | Low RAM with Airflow, MLflow and kind at once | 16 GB minimum; if that fails, native Kubernetes Jobs and CronJobs instead of Airflow |
