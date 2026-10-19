@@ -12,6 +12,9 @@ SESSIONS = [
         "meeting_key": 1236,
         "session_name": "Qualifying",
         "location": "Monaco",
+        "circuit_key": 22,
+        "circuit_short_name": "Monte Carlo",
+        "country_name": "Monaco",
         "date_start": "2024-05-25T14:00:00+00:00",
         "date_end": "2024-05-25T15:00:00+00:00",
         "is_cancelled": False,
@@ -21,12 +24,17 @@ SESSIONS = [
         "meeting_key": 1236,
         "session_name": "Race",
         "location": "Monaco",
+        "circuit_key": 22,
+        "circuit_short_name": "Monte Carlo",
+        "country_name": "Monaco",
         "date_start": "2024-05-26T13:00:00+00:00",
         "date_end": "2024-05-26T15:00:00+00:00",
         "is_cancelled": False,
     },
 ]
-SCHEDULE = build_schedule(SESSIONS, [{"meeting_key": 1236, "meeting_name": "Monaco Grand Prix"}], 2024)
+SCHEDULE = build_schedule(
+    SESSIONS, [{"meeting_key": 1236, "meeting_name": "Monaco Grand Prix", "circuit_type": "Temporary - Street"}], 2024
+)
 
 RECORDS = {
     "laps": [

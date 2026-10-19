@@ -1,0 +1,107 @@
+# Drafted by scripts/seed_circuits.py from the OpenF1 schedule.
+# circuit_type: street | permanent | hybrid. Replace every `review` by hand; the loader rejects it.
+# Reviewed 2026-10-19: see DECISIONS.md (Spa, hybrids, circuit_key 12).
+- circuit_key: 2
+  name: Silverstone
+  country: United Kingdom
+  circuit_type: permanent
+- circuit_key: 4
+  name: Hungaroring
+  country: Hungary
+  circuit_type: permanent
+- circuit_key: 6
+  name: Imola
+  country: Italy
+  circuit_type: permanent
+- circuit_key: 7
+  name: Spa-Francorchamps
+  country: Belgium
+  circuit_type: permanent
+- circuit_key: 9
+  name: Austin
+  country: United States
+  circuit_type: permanent
+- circuit_key: 10
+  name: Melbourne
+  country: Australia
+  circuit_type: hybrid
+- circuit_key: 12
+  name: Bahrain (OpenF1 key 12)
+  country: Bahrain
+  circuit_type: permanent
+- circuit_key: 14
+  name: Interlagos
+  country: Brazil
+  circuit_type: permanent
+- circuit_key: 15
+  name: Catalunya
+  country: Spain
+  circuit_type: permanent
+- circuit_key: 19
+  name: Spielberg
+  country: Austria
+  circuit_type: permanent
+- circuit_key: 22
+  name: Monte Carlo
+  country: Monaco
+  circuit_type: street
+- circuit_key: 23
+  name: Montreal
+  country: Canada
+  circuit_type: hybrid
+- circuit_key: 39
+  name: Monza
+  country: Italy
+  circuit_type: permanent
+- circuit_key: 46
+  name: Suzuka
+  country: Japan
+  circuit_type: permanent
+- circuit_key: 49
+  name: Shanghai
+  country: China
+  circuit_type: permanent
+- circuit_key: 55
+  name: Zandvoort
+  country: Netherlands
+  circuit_type: permanent
+- circuit_key: 61
+  name: Singapore
+  country: Singapore
+  circuit_type: street
+- circuit_key: 63
+  name: Sakhir
+  country: Bahrain
+  circuit_type: permanent
+- circuit_key: 65
+  name: Mexico City
+  country: Mexico
+  circuit_type: permanent
+- circuit_key: 70
+  name: Yas Marina Circuit
+  country: United Arab Emirates
+  circuit_type: permanent
+- circuit_key: 144
+  name: Baku
+  country: Azerbaijan
+  circuit_type: street
+- circuit_key: 149
+  name: Jeddah
+  country: Saudi Arabia
+  circuit_type: street
+- circuit_key: 150
+  name: Lusail
+  country: Qatar
+  circuit_type: permanent
+- circuit_key: 151
+  name: Miami
+  country: United States
+  circuit_type: hybrid
+- circuit_key: 152
+  name: Las Vegas
+  country: United States
+  circuit_type: street
+- circuit_key: 153
+  name: Madring
+  country: Spain
+  circuit_type: hybrid
