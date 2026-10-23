@@ -1,6 +1,6 @@
 # SPEC 03 — Exploratory data analysis
 
-> **Status:** Approved
+> **Status:** Implemented
 > **Depends on:** SPEC 01 (raw session ingestion), SPEC 02 (reference data)
 > **Backlog:** Phase 2 of `docs/backlog.md` (target, missing values, relations, baseline, decisions)
 > **Date:** 2026-10-19
@@ -130,23 +130,23 @@ Each step leaves the repo working and can be committed on its own. Code goes in 
 
 ## Acceptance criteria
 
-- [ ] `uv run pytest tests` passes without network access, including `tests/exploratory/test_provisional.py`.
-- [ ] `uv run ruff check src scripts tests notebooks/exploratory` and `uv run ruff format --check src scripts tests notebooks/exploratory` report no problems.
-- [ ] `pyproject.toml` pins `ipykernel`, `nbformat` and `nbconvert` in the `dev` group, and `uv run jupyter nbconvert --version` prints a version.
-- [ ] `train_races()` returns 56 races, from 2023 round 1 to 2025 round 10, when 70 races are held, and a test confirms that building the dataset opens no file of any other race or of 2026.
-- [ ] `data/exploratory/provisional_train.parquet` has one row per driver in each train race, no repeated `(year, round, driver)`, and exactly these columns: the identification columns, `race_pace_delta_pct`, `clean_laps`, `is_valid_row`, the 15 features and `humidity` and `wind_speed`.
-- [ ] Rows with `is_valid_row = False` have an empty target; rows with `is_valid_row = True` have at least 10 clean laps and a qualifying time.
-- [ ] The form features of the first race of 2023 are empty, and a test shows that no row uses its own race or a later one.
-- [ ] In `00_dataset.ipynb` the target of every driver in 2024 round 8, recomputed with independent plain code, equals the dataset value within 1e-9.
-- [ ] The five notebooks run from start to finish with `uv run jupyter nbconvert --to notebook --execute --inplace` without errors, and are saved with their outputs.
-- [ ] Each notebook ends with a "Findings" cell that lists the decisions it suggests, or says explicitly that nothing changes.
-- [ ] `04_baseline.ipynb` reports the MAE of the median dummy and of the qualifying baseline, as the mean and standard deviation over the temporal CV folds of the train races.
-- [ ] `docs/eda_summary.md` exists, has between 6 and 10 figures and every image link points to a file in `docs/eda/figures/`.
-- [ ] `docs/eda_summary.md` ends with the exit list (columns to drop, imputation per column, caps, encodings, target transform, metric and loss) and a "Roadmap coverage" table where each item of 2.1 to 2.7 points to a notebook.
-- [ ] The "Decisions" section of `docs/eda_summary.md` lists each decision with the figure or number that supports it, and every decision in it has its line in `DECISIONS.md` (or says explicitly that nothing changes).
-- [ ] `DECISIONS.md` has the lines of step 1 and one line for each finding accepted in step 13; none of them changes a frozen contract of `CLAUDE.md`.
-- [ ] `git check-ignore data/exploratory/provisional_train.parquet` confirms the file is ignored, and `grep -rn "provisional" src scripts dags` finds nothing: no code outside the notebooks and their tests uses the throwaway code.
-- [ ] `config/training.json`, the Supabase schema and everything in `src/` are unchanged.
+- [x] `uv run pytest tests` passes without network access, including `tests/exploratory/test_provisional.py`.
+- [x] `uv run ruff check src scripts tests notebooks/exploratory` and `uv run ruff format --check src scripts tests notebooks/exploratory` report no problems.
+- [x] `pyproject.toml` pins `ipykernel`, `nbformat` and `nbconvert` in the `dev` group, and `uv run jupyter nbconvert --version` prints a version.
+- [x] `train_races()` returns 56 races, from 2023 round 1 to 2025 round 10, when 70 races are held, and a test confirms that building the dataset opens no file of any other race or of 2026.
+- [x] `data/exploratory/provisional_train.parquet` has one row per driver in each train race, no repeated `(year, round, driver)`, and exactly these columns: the identification columns, `race_pace_delta_pct`, `clean_laps`, `is_valid_row`, the 15 features and `humidity` and `wind_speed`.
+- [x] Rows with `is_valid_row = False` have an empty target; rows with `is_valid_row = True` have at least 10 clean laps and a qualifying time.
+- [x] The form features of the first race of 2023 are empty, and a test shows that no row uses its own race or a later one.
+- [x] In `00_dataset.ipynb` the target of every driver in 2024 round 8, recomputed with independent plain code, equals the dataset value within 1e-9.
+- [x] The five notebooks run from start to finish with `uv run jupyter nbconvert --to notebook --execute --inplace` without errors, and are saved with their outputs.
+- [x] Each notebook ends with a "Findings" cell that lists the decisions it suggests, or says explicitly that nothing changes.
+- [x] `04_baseline.ipynb` reports the MAE of the median dummy and of the qualifying baseline, as the mean and standard deviation over the temporal CV folds of the train races.
+- [x] `docs/eda_summary.md` exists, has between 6 and 10 figures and every image link points to a file in `docs/eda/figures/`.
+- [x] `docs/eda_summary.md` ends with the exit list (columns to drop, imputation per column, caps, encodings, target transform, metric and loss) and a "Roadmap coverage" table where each item of 2.1 to 2.7 points to a notebook.
+- [x] The "Decisions" section of `docs/eda_summary.md` lists each decision with the figure or number that supports it, and every decision in it has its line in `DECISIONS.md` (or says explicitly that nothing changes).
+- [x] `DECISIONS.md` has the lines of step 1 and one line for each finding accepted in step 13; none of them changes a frozen contract of `CLAUDE.md`.
+- [x] `git check-ignore data/exploratory/provisional_train.parquet` confirms the file is ignored, and `grep -rn "provisional" src scripts dags` finds nothing: no code outside the notebooks and their tests uses the throwaway code.
+- [x] `config/training.json`, the Supabase schema and everything in `src/` are unchanged.
 
 ---
 
