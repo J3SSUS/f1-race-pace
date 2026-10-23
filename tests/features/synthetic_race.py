@@ -158,12 +158,20 @@ def race_tables(events: list[dict]) -> dict[str, pd.DataFrame]:
 
 
 def qualifying_tables() -> dict[str, pd.DataFrame]:
-    """The best time of a driver is `base - 3`; the last three drivers are knocked out before Q3."""
+    """The best time of a driver is `base - 3`, set in the last session it reaches (earlier ones are slower).
+
+    The first three drivers reach Q3, the next two are knocked out in Q2 and the last three in Q1.
+    """
     ranking = sorted(DRIVERS, key=lambda d: d.base)
     durations = []
     for index, d in enumerate(ranking):
         best = round(d.base - 3.0, 3)
-        durations.append([best + 1.0, best + 0.5 if index < 5 else np.nan, best if index < 3 else np.nan])
+        if index < 3:
+            durations.append([best + 1.0, best + 0.5, best])
+        elif index < 5:
+            durations.append([best + 0.5, best, np.nan])
+        else:
+            durations.append([best, np.nan, np.nan])
     laps = [
         {
             "driver_number": d.number,
