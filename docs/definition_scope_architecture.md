@@ -24,7 +24,7 @@ These contracts do not change without first recording it in `DECISIONS.md`.
 | Row | One driver in one race, with data up to the end of Saturday (sprint included on sprint weekends) |
 | Target | `race_pace_delta_pct` (next section) |
 | Target function | Lives in `src/features/`; used by historical training and the ground truth DAG, with no second implementation |
-| Valid rows | A row is dropped without qualifying or with fewer than 10 clean laps; that rule lives in features, not in the models. Predictions are made for every entry, but metrics count only rows with `is_valid_row = true` |
+| Valid rows | A row is dropped without qualifying or with fewer than 15 clean laps; that rule lives in features, not in the models. Predictions are made for every entry, but metrics count only rows with `is_valid_row = true` |
 | Missing values | Imputation of practice, sprint and form features lives inside each model's pipeline, as an Optuna hyperparameter |
 | Metric | MAE as the main one, always compared against the qualifying baseline: a linear regression of the target on `quali_delta_pct`, fitted on train |
 | Split | Chronological 80/20 by race: the oldest 80% of races is train, the most recent 20% is test (all rows of a race stay together). No validation set: models and Optuna trials are compared with temporal cross-validation inside train; test is touched only once, to report the final metric. The split is defined in the config and applied by the `sampling` step of the training DAG; later steps read it and nobody redefines it. The first model trains on 2023–2025 (80/20 inside that range), so test stays out of the 2026 regulations; 2026 is walk-forward from round 1 and the shadow is the first model, frozen. Each retraining takes every race available up to its cutoff and applies the same 80/20; only races prior to the one being predicted are included |
@@ -42,7 +42,7 @@ The target `race_pace_delta_pct` is the driver's pace against the field's in the
 target = (median of the driver's clean laps / median of the field's clean laps - 1) * 100
 ```
 
-A clean lap excludes lap 1, pit in and out laps, and laps under safety car or yellow flag. A driver with fewer than 10 clean laps is dropped.
+A clean lap excludes lap 1, pit in and out laps, and laps under safety car or yellow flag. A driver with fewer than 15 clean laps is dropped (the field's median still pools drivers with at least 10).
 
 Identification columns (they do not predict): `year`, `round`, `circuit`, `driver`, `team`. Features, all known on Saturday:
 
@@ -133,7 +133,7 @@ The core is phases 1 to 8; phase 9 comes after. A phase does not start until the
 
 1. **Ingestion**: done when one idempotent ingestion function (shared by the sampling step and the prediction and ground truth DAGs) downloads seasons 2023–2027 from OpenF1 to local Parquet, session coverage is at least 95% and there is a report of the missing races.
 2. **EDA**: done when the target, missing values, correlations and the qualifying baseline have been reviewed on the train portion only, and any resulting decision is in `DECISIONS.md`. It is a manual notebook and does not run in the DAGs.
-3. **Sampling and preprocess**: done when the sampling step ingests, splits chronologically and registers the train and test Parquets in MLflow, there is one row per driver and race, the Pandera schema passes, a test confirms no feature uses Sunday data, the target function is tested against known races, the valid-row rule drops anyone without qualifying or 10 clean laps, and the features of all seasons are loaded in Supabase.
+3. **Sampling and preprocess**: done when the sampling step ingests, splits chronologically and registers the train and test Parquets in MLflow, there is one row per driver and race, the Pandera schema passes, a test confirms no feature uses Sunday data, the target function is tested against known races, the valid-row rule drops anyone without qualifying or 15 clean laps, and the features of all seasons are loaded in Supabase.
 4. **Training**: done when the baseline and the 6 models have their runs logged in MLflow, reading features from Supabase, with temporal split, imputation inside the pipeline and comparable MAE. Training does not promote anything.
 5. **Evaluate**: done when the best candidate is selected against the baseline and its SHAP charts and `MODEL_CARD.md` exist. If no model beats the baseline, the page says so. The first champion is then promoted by hand.
 6. **Prediction and ground truth DAGs**: done when, as scripts in docker-compose, the backtest of 2026 runs race by race using only data up to each Saturday and fills `predictions` (champion and shadow), the ground truth DAG inserts the actual pace into `ground_truth`, and one race is predicted live (a late-2026 race if the pipeline is ready, otherwise the first of 2027). Both call the feature function from phase 3.

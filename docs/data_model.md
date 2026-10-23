@@ -56,7 +56,7 @@ Typed columns (`value_num`/`value_text`) avoid casting everything to text. The t
 | `predictions` | `prediction_id`, unique `(entry_id, model_version_id)` | Predicted `race_pace_delta_pct` per driver, plus the qualifying baseline prediction for the same entry (`baseline_pace_delta_pct`) so the comparison is available without another join. The unique pair is the contract key `(entry_id, model_version_id)`, since `entry_id` already encodes year, round and driver. |
 | `ground_truth` | `entry_id` | Actual `race_pace_delta_pct`, `clean_laps` and `is_valid_row`, ingested after the race using the same target function in `src/features/`. One row per entry, independent of model versions. |
 
-The page reads a view that joins both. Predictions are made on Saturday for every entry, but only rows with `ground_truth.is_valid_row = true` count for metrics (a driver with fewer than 10 clean laps has no reliable actual); the page still shows the prediction for the rest. Metric queries filter on `is_valid_row`:
+The page reads a view that joins both. Predictions are made on Saturday for every entry, but only rows with `ground_truth.is_valid_row = true` count for metrics (a driver with fewer than 15 clean laps has no reliable actual); the page still shows the prediction for the rest. Metric queries filter on `is_valid_row`:
 
 ```sql
 CREATE VIEW prediction_results AS

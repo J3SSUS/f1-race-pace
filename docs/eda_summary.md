@@ -54,11 +54,11 @@ The floor (median dummy) scores a cross-validated MAE of 0.727; the qualifying l
 
 ## 3. Decisions
 
-The lines in `DECISIONS.md` were added on 2026-10-22, after this summary was reviewed. Decision 1 changes a frozen contract of `CLAUDE.md` (the valid-row rule), so it stays open: phase 3 decides it with the real target function, and until then the rule stays at 10 clean laps.
+The lines in `DECISIONS.md` were added on 2026-10-22, after this summary was reviewed. Decision 1 changed a frozen contract of `CLAUDE.md` (the valid-row rule): it was chosen on 2026-10-22, when SPEC 04 was designed, and the minimum is now 15 clean laps.
 
 | # | Decision | Supporting figure or number | Line in `DECISIONS.md` |
 | --- | --- | --- | --- |
-| 1 | Raise the valid-row minimum from 10 to 15 clean laps (the field keeps its 10-lap rule until phase 3 decides) | Figure 05: rows with 10–14 laps have std 5.2, 3 of 9 beyond ±2%; the minimum of 15 leaves 1,041 rows, excess kurtosis 71.9 → -0.07, RMSE/MAE 1.43 → 1.25 | Open: phase 3 decides |
+| 1 | Raise the valid-row minimum from 10 to 15 clean laps (the field keeps its 10-lap rule until phase 3 decides) | Figure 05: rows with 10–14 laps have std 5.2, 3 of 9 beyond ±2%; the minimum of 15 leaves 1,041 rows, excess kurtosis 71.9 → -0.07, RMSE/MAE 1.43 → 1.25 | Added 2026-10-22 (SPEC 04) |
 | 2 | Keep the 3% cap on `quali_delta_pct`; a 2% cap is a phase 4 candidate | Figure 06: CV MAE 0.523 with the cap, 0.682 without; 0.495 at 2% | Added 2026-10-22 |
 | 3 | Compute `teammate_quali_gap` from the capped times (or cap the gap) | 52 rows beyond 4 MAD, -30% to +43%, 11 beyond ±8%; the teammate who drove normally inherits the extreme | Added 2026-10-22 |
 | 4 | The qualifying baseline reads the gap capped at 3% | Figure 09: 0.523 against 0.682 uncapped and 0.727 for the floor | Added 2026-10-22 |
