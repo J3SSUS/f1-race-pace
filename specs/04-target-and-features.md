@@ -18,7 +18,7 @@
 - The form features (`driver_pace_last3`, `team_pace_last3`, `team_pace_this_circuit_prev`) take the targets of earlier races as an argument and use only races before the one being built. They do not cross the 2025→2026 regulation change.
 - `config/features.yml`: the catalog (name, group, dtype, `known_on_saturday`, position) that also generates the Pandera schema and its `schema_hash`.
 - One row per driver and race with the identification columns, the three target columns and the 15 features; no repeated `(year, round, driver)`.
-- Tests with no network: hand-checked fixtures of 3 known races (candidates: Bahrain, Monaco and Canada 2024), the leakage test, and a comparison of the real function with the provisional dataset on the 56 train races.
+- Tests with no network on synthetic raw tables (a builder in `tests/features/`; no OpenF1 data is committed) that reproduce a clean race, a race with a red flag and a race with a safety car, with expected values derived by hand; the leakage test; and a comparison of the real function with the provisional dataset on the 56 train races, run locally.
 - Deleting `notebooks/exploratory/provisional.py` and `tests/exploratory/` once the comparison passes, as SPEC 03 decided.
 - The lines in `DECISIONS.md` for what the implementation settles.
 
@@ -118,11 +118,11 @@ FORM_RACES = 3
 
 Steps 2 to 7 port the logic of `notebooks/exploratory/provisional.py` into `src/features/`, with the changes of SPEC 04 (15 laps, the real contracts, `RaceInfo`). Each step leaves `uv run pytest tests` green and can be committed on its own.
 
-1. **Skeleton and fixtures.** Create `src/features/` modules with the constants, `RaceInfo` and empty signatures, and `tests/features/`. Copy trimmed raw tables of Bahrain, Monaco and Canada 2024 to `tests/fixtures/` with a file of expected values calculated by hand (`expected.json`: per race, the clean laps, field median and target of 3 drivers). Check: a test loads each fixture.
-2. **Clean laps** (`src/features/clean_laps.py`). Neutralised intervals from `race_control` and the clean-lap filter. Check: tests on a synthetic `race_control` (safety car, VSC, red flag, sector yellow that does not count) and on the Monaco fixture.
-3. **Target** (`src/features/target.py`, `race_target`). Field median from drivers with at least 10 clean laps; `is_valid_row` with a qualifying time and at least 15 clean laps. Check: the hand-checked values of the 3 fixtures match within 1e-9; a driver with 12 clean laps is not valid.
+1. **Skeleton and synthetic races.** Create `src/features/` modules with the constants, `RaceInfo` and empty signatures, and `tests/features/`. Add `tests/features/synthetic_race.py`, a builder that writes raw-layout Parquets (the R and Q sessions, with the tables declared in `ingestion.schemas`) for 8 drivers over 30 lap slots, with the race control events chosen by each test; later steps extend it (FP2, sprint) when they need it. Check: a test builds a race, every table passes `validate_tables`, and the lap and pit counts match the values derived by hand.
+2. **Clean laps** (`src/features/clean_laps.py`). Neutralised intervals from `race_control` and the clean-lap filter. Check: tests on a synthetic `race_control` (safety car, VSC, red flag, sector yellow that does not count) and on the synthetic red-flag and safety-car races.
+3. **Target** (`src/features/target.py`, `race_target`). Field median from drivers with at least 10 clean laps; `is_valid_row` with a qualifying time and at least 15 clean laps. Check: on the synthetic race the clean laps, the field median (91.2) and the targets derived by hand match within 1e-9; a driver with 12 clean laps is not valid.
 4. **Qualifying features** (`src/features/qualifying.py`). `quali_delta_pct` capped at 3%, `grid_position`, `reached_q3` and `teammate_quali_gap` from the capped times, all from `session_result`. Check: a case above 3%, a driver without teammate (NaN), and a Q session with an empty `laps` table that still yields the three features (the 2025 Azerbaijan case).
-5. **Context features** (`src/features/context.py`). `track_temp`, `air_temp` and `rain_flag` from the Q weather, `circuit_type` from `RaceInfo`, `is_sprint_weekend` from the existence of the S session. Check: tests on the Canada fixture (rain) and on a synthetic sprint folder.
+5. **Context features** (`src/features/context.py`). `track_temp`, `air_temp` and `rain_flag` from the Q weather, `circuit_type` from `RaceInfo`, `is_sprint_weekend` from the existence of the S session. Check: tests on a synthetic weather table with rain and on a synthetic sprint folder.
 6. **Practice and sprint features** (`src/features/practice.py`). Long runs of FP2, `fp_long_run_delta_pct`, `fp_tyre_deg`, and `sprint_pace_delta_pct` with the target's formula. Check: a synthetic stint of 6 laps; NaN on a sprint weekend for FP2 and on a normal weekend for the sprint.
 7. **Form features** (`src/features/form.py`). The three form features from `history`. Check: a test that changes or deletes later races and the values do not move; the first 2026 races come out empty; `team_pace_this_circuit_prev` is empty for a circuit not raced the year before.
 8. **Catalog and schema** (`config/features.yml`, `src/features/catalog.py`). The 15 features with group, dtype, `known_on_saturday`, position and limits; a loader; the Pandera schema generated from it; `schema_hash`. Check: the schema rejects a value of `quali_delta_pct` above 3 and an unknown `circuit_type`; the hash changes when a limit changes.
@@ -137,7 +137,7 @@ Steps 2 to 7 port the logic of `notebooks/exploratory/provisional.py` into `src/
 - [ ] `uv run pytest tests` passes without network access, including `tests/features/`.
 - [ ] `uv run ruff check src scripts tests` and `uv run ruff format --check src scripts tests` report no problems.
 - [ ] `config/features.yml` lists exactly the 15 features of `docs/definition_scope_architecture.md`, with unique names, positions 1 to 15, a group allowed by the `features.feature_group` check of Supabase, and `known_on_saturday: true` for all of them. `humidity` and `wind_speed` are not in it.
-- [ ] For the three fixture races, `race_target` reproduces the hand-checked clean laps, field median and target of the listed drivers within 1e-9.
+- [ ] On the synthetic races (clean, red flag, safety car), `race_target` reproduces the clean laps, field median and target derived by hand within 1e-9.
 - [ ] A driver with 14 clean laps gets `is_valid_row = False` and an empty target; one with 15 gets `True`; a driver with 12 still counts in the field's pooled median.
 - [ ] A lap under safety car, virtual safety car, red flag or track-wide yellow is not clean; a sector yellow does not remove it.
 - [ ] `quali_delta_pct` is never above 3 and `teammate_quali_gap` is computed from the capped times.
@@ -167,7 +167,7 @@ Steps 2 to 7 port the logic of `notebooks/exploratory/provisional.py` into `src/
 - **Yes:** `config/features.yml` holds the catalog and the limits, and the Pandera schema and `schema_hash` are generated from it. The constants (15 laps, 10 laps, 3%, 3 races) live in `src/features/`, because `config/training.json` is for training knobs. **No:** a second hand-written schema.
 - **Yes:** the 15 features keep the definitions of the scope document and the EDA, with no new feature and no retuning (long run of 5 laps, 107% limit). **No:** `humidity` and `wind_speed` (EDA decision 8).
 - **Yes:** form features do not cross the 2025→2026 regulation change.
-- **Yes:** fixtures are trimmed raw tables of three real races with values checked by hand. **No:** tests that download from OpenF1.
+- **Yes:** tests use synthetic raw tables built by a helper, with values derived by hand, because OpenF1 data is not committed to the repo. **No:** trimmed tables of real races as fixtures, and tests that download from OpenF1. Real races are checked only by the local comparison of step 10 and the run over all held races.
 - **Yes:** the comparison with the provisional dataset is a throwaway script and its result goes to `DECISIONS.md`, because the code it compares against is deleted right after. **No:** keep a comparison script in the repo.
 - **Yes:** delete `provisional.py` and `tests/exploratory/` in this spec, as SPEC 03 decided. The five EDA notebooks stay with their outputs but cannot be run again.
 
@@ -177,8 +177,8 @@ Steps 2 to 7 port the logic of `notebooks/exploratory/provisional.py` into `src/
 
 | Risk | Mitigation |
 | --- | --- |
-| The hand-checked values repeat an error of the code, because both come from the same reading of the rule | The expected values are calculated with plain independent code (as the 2024 round 8 check of SPEC 03) and a few drivers are verified by hand against the raw laps |
-| Trimming a fixture changes the field's median, because it is pooled over all drivers | The fixtures keep every driver's laps of the race; only the tables and sessions a test does not read are dropped |
+| The expected values repeat an error of the code, because both come from the same reading of the rule | The expected values are derived by hand from the design of the synthetic race (constant lap times per driver), never copied from the output of the code, and the real races are cross-checked in step 10 |
+| A synthetic race misses a case of real data (a lap without a start time, a table with unexpected types) | The builder uses the schemas declared in `ingestion.schemas`, and step 10 runs the real function over all the races held |
 | The comparison with the provisional dataset shows differences beyond the 9 rows with 10 to 14 laps | The provisional code is not deleted until each difference is explained as a bug of the port or of the provisional code |
 | A session is missing or `invalid` on disk (the 2023 Hungary FP1) | A missing FP2 or sprint gives NaN features, never an error; only a missing Q or R session stops the build |
 | A team renamed or a driver who changes team in the middle of a season breaks the form history | Team names go through `config/teams.yml` and each row uses the team the driver had in that race |
