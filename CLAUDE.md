@@ -16,7 +16,7 @@ Status: phase 0 (setup) in progress. Read `docs/backlog.md` before starting any 
 ## Frozen contracts (do not change without a line in DECISIONS.md)
 
 - **Row:** one driver in one race, with data up to the end of Saturday. **Never use Sunday data as a feature** (the race grid is Sunday data; `grid_position` is the qualifying position).
-- **Target:** `(median clean lap of the driver / median clean lap of the field - 1) * 100`. Clean lap: lap > 1, not a pit-out lap, no pit stop in the lap, a recorded lap time, and no safety car, virtual safety car, red flag or track-wide yellow during the lap (intervals from OpenF1 `race_control`). A driver needs at least 10 clean laps (valid row). The target function lives in `src/features/` and is the only implementation.
+- **Target:** `(median clean lap of the driver / median clean lap of the field - 1) * 100`. Clean lap: lap > 1, not a pit-out lap, no pit stop in the lap, a recorded lap time, and no safety car, virtual safety car, red flag or track-wide yellow during the lap (intervals from OpenF1 `race_control`). A driver needs at least 15 clean laps (valid row); the field's median pools only drivers with at least 10. The target function lives in `src/features/` and is the only implementation.
 - **Ingestion** reads OpenF1 (free, from 2023; FastF1's archive needs a paid F1 TV subscription since 2026-10-15) and is one idempotent function in `src/`, used by the `sampling` step and by the prediction and ground truth DAGs.
 - **Training DAG:** `sampling → preprocess → training → evaluate`, one pod per step and per model. Sampling ingests, applies the 80/20 chronological split by race (from the config) and registers the Parquets in MLflow as datasets. Nobody else redefines the split.
 - **Data:** raw data in local Parquet; everything calculated (features in long format, ground truth, predictions, metrics) in Supabase. Training reads features from Supabase.
@@ -29,6 +29,6 @@ Status: phase 0 (setup) in progress. Read `docs/backlog.md` before starting any 
 
 - Python 3.12, uv, ruff, pytest. Pin versions in `pyproject.toml`.
 - Every row and artifact carries `run_id`, model version and generation date.
-- Target tests use hand-checked fixtures of 3 known races in `tests/fixtures`.
+- Target tests use synthetic raw tables built in `tests/features` (no OpenF1 data in the repo) with values derived by hand.
 - After the core (phase 9): Evidently, retraining trigger and GitHub Actions (tests, image builds, page deploy). Out of scope: Kubeflow, MinIO, Prometheus/Grafana, Helm, cloud, betting.
 - Commit only when the user asks.
