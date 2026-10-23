@@ -6,3 +6,4 @@ QUALI_CAP_PCT = 3.0
 FORM_RACES = 3
 MIN_LONG_RUN = 5  # consecutive clean laps in one stint that make a long run in practice
 SLOW_LAP_LIMIT = 1.07  # laps slower than this share of the stint's best clean lap are ignored in a long run
+REGULATION_CHANGE_YEAR = 2026  # form features never look across it: the 2026 cars are not the 2025 ones
