@@ -17,6 +17,23 @@ Hand-derived values of a race without neutralised laps (the `clean` scenario):
     GGG     93.0   9     -        8    (below 10: not in the field)
 
 The field pools 180 laps; the 90th and 91st sorted values are both HHH's 91.2, so the field median is 91.2.
+
+Practice (FP2, `practice_tables`): every driver has one stint of 8 laps. Lap 1 is the out lap, laps 2 to 7 are timed
+`b + deg * k` for k = 0..5 (`b` is the base time minus 2 s), lap 8 is the in lap (a pit record). So each driver has
+one long run of 6 clean laps, a median of `b + 2.5 * deg` and a tyre degradation of exactly `deg`:
+
+    driver  b      deg    median
+    AAA     88.0   0.02   88.05
+    BBB     88.5   0.03   88.575
+    CCC     89.0   0.04   89.10
+    HHH     89.2   0.05   89.325
+    DDD     89.5   0.01   89.525
+    EEE     90.0   0.02   90.05
+    FFF     90.5   0.03   90.575
+    GGG     91.0   0.04   91.10
+
+The 48 pooled laps never overlap between drivers except a tie at 89.2 (CCC's last, HHH's first); the 24th sorted lap
+is HHH's last (89.45) and the 25th is DDD's first (89.5), so the field median is 89.475.
 """
 
 import json
@@ -99,6 +116,63 @@ def _lap_duration(driver: SyntheticDriver, lap: int) -> float:
     if driver.pit_lap is not None and lap == driver.pit_lap + 1:
         return driver.base + 20.0
     return driver.base
+
+
+PRACTICE_DEG = {"AAA": 0.02, "BBB": 0.03, "CCC": 0.04, "HHH": 0.05, "DDD": 0.01, "EEE": 0.02, "FFF": 0.03, "GGG": 0.04}
+PRACTICE_LAPS = 8
+
+
+def practice_tables() -> dict[str, pd.DataFrame]:
+    """FP2: one stint of 8 laps per driver, with a long run of 6 clean laps (laps 2 to 7)."""
+    laps, pits, stints = [], [], []
+    for d in DRIVERS:
+        b = d.base - 2.0
+        for lap in range(1, PRACTICE_LAPS + 1):
+            if lap == 1:
+                duration = b + 20.0  # out lap
+            elif lap == PRACTICE_LAPS:
+                duration = b + 3.0  # in lap
+            else:
+                duration = b + PRACTICE_DEG[d.code] * (lap - 2)
+            laps.append(
+                {
+                    "driver_number": d.number,
+                    "lap_number": lap,
+                    "lap_duration": duration,
+                    "is_pit_out_lap": lap == 1,
+                    "date_start": at(lap, 0.0),
+                    "duration_sector_1": duration / 3,
+                    "duration_sector_2": duration / 3,
+                    "duration_sector_3": duration / 3,
+                }
+            )
+        pits.append(
+            {
+                "driver_number": d.number,
+                "lap_number": PRACTICE_LAPS,
+                "date": at(PRACTICE_LAPS, 80.0),
+                "pit_duration": 22.0,
+            }
+        )
+        stints.append(
+            {
+                "driver_number": d.number,
+                "stint_number": 1,
+                "lap_start": 1,
+                "lap_end": PRACTICE_LAPS,
+                "compound": "MEDIUM",
+                "tyre_age_at_start": 0,
+            }
+        )
+    tables = qualifying_tables()
+    tables["laps"] = pd.DataFrame(laps).astype(
+        {"driver_number": "int64", "lap_number": "int64", "is_pit_out_lap": bool}
+    )
+    tables["pit"] = pd.DataFrame(pits).astype({"driver_number": "int64", "lap_number": "int64"})
+    tables["stints"] = pd.DataFrame(stints).astype(
+        {"lap_start": "Int64", "lap_end": "Int64", "tyre_age_at_start": "Int64"}
+    )
+    return tables
 
 
 def race_tables(events: list[dict]) -> dict[str, pd.DataFrame]:

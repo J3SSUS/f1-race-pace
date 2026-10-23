@@ -4,3 +4,5 @@ MIN_VALID_CLEAN_LAPS = 15  # a row is valid with at least this many clean laps a
 MIN_FIELD_CLEAN_LAPS = 10  # a driver enters the field's pooled median with at least this many
 QUALI_CAP_PCT = 3.0
 FORM_RACES = 3
+MIN_LONG_RUN = 5  # consecutive clean laps in one stint that make a long run in practice
+SLOW_LAP_LIMIT = 1.07  # laps slower than this share of the stint's best clean lap are ignored in a long run
