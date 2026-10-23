@@ -1,0 +1,125 @@
+# Catalog of the features of the model: the single list that builds the Pandera schema, the Supabase `features`
+# rows and the order of the columns of the wide matrix. A change of logic or limits is a new version.
+#
+# group:    qualifying | practice | sprint | form | circuit | weather | context  (the check of `features.feature_group`)
+# dtype:    float | int | flag (0/1) | category (text)
+# position: order of the columns, 1 to 15
+# nullable, min, max, allowed: the limits the Pandera schema enforces. A missing value is allowed only if nullable.
+version: v1
+features:
+  - name: quali_delta_pct
+    group: qualifying
+    dtype: float
+    known_on_saturday: true
+    position: 1
+    nullable: true # a driver without a qualifying time
+    min: 0
+    max: 3 # capped at 3%
+
+  - name: grid_position
+    group: qualifying
+    dtype: int
+    known_on_saturday: true
+    position: 2
+    nullable: true # the source gives no position for some drivers
+    min: 1
+    max: 30
+
+  - name: reached_q3
+    group: qualifying
+    dtype: flag
+    known_on_saturday: true
+    position: 3
+    nullable: false
+    allowed: [0, 1]
+
+  - name: fp_long_run_delta_pct
+    group: practice
+    dtype: float
+    known_on_saturday: true
+    position: 4
+    nullable: true # sprint weekends, and drivers without a long run
+
+  - name: fp_tyre_deg
+    group: practice
+    dtype: float
+    known_on_saturday: true
+    position: 5
+    nullable: true
+
+  - name: driver_pace_last3
+    group: form
+    dtype: float
+    known_on_saturday: true
+    position: 6
+    nullable: true # the driver's first races, and the first race of a regulation era
+
+  - name: team_pace_last3
+    group: form
+    dtype: float
+    known_on_saturday: true
+    position: 7
+    nullable: true
+
+  - name: teammate_quali_gap
+    group: form
+    dtype: float
+    known_on_saturday: true
+    position: 8
+    nullable: true # no teammate, or a teammate without a time
+
+  - name: team_pace_this_circuit_prev
+    group: circuit
+    dtype: float
+    known_on_saturday: true
+    position: 9
+    nullable: true # circuit not raced the year before, and every 2026 row
+
+  - name: circuit_type
+    group: circuit
+    dtype: category
+    known_on_saturday: true
+    position: 10
+    nullable: false
+    allowed: [street, permanent, hybrid]
+
+  - name: track_temp
+    group: weather
+    dtype: float
+    known_on_saturday: true
+    position: 11
+    nullable: true # a Q session without weather rows
+    min: 0
+    max: 80
+
+  - name: air_temp
+    group: weather
+    dtype: float
+    known_on_saturday: true
+    position: 12
+    nullable: true
+    min: -10
+    max: 50
+
+  - name: rain_flag
+    group: weather
+    dtype: flag
+    known_on_saturday: true
+    position: 13
+    nullable: true
+    allowed: [0, 1]
+
+  - name: sprint_pace_delta_pct
+    group: sprint
+    dtype: float
+    known_on_saturday: true
+    position: 14
+    nullable: true # normal weekends
+
+  - name: is_sprint_weekend
+    group: context
+    dtype: flag
+    known_on_saturday: true
+    position: 15
+    nullable: false
+    allowed: [0, 1]
