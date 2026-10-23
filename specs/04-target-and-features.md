@@ -1,6 +1,6 @@
 # SPEC 04 — Target and features (preprocess)
 
-> **Status:** Approved
+> **Status:** Implemented
 > **Depends on:** SPEC 01 (raw session ingestion), SPEC 02 (reference data), SPEC 03 (EDA)
 > **Backlog:** Phase 3 of `docs/backlog.md` (target function, cleaning, features, `features.yml`, Pandera schema, leakage test); the sampling step and the feature store load are SPEC 05
 > **Date:** 2026-10-22
@@ -134,23 +134,23 @@ Steps 2 to 7 port the logic of `notebooks/exploratory/provisional.py` into `src/
 
 ## Acceptance criteria
 
-- [ ] `uv run pytest tests` passes without network access, including `tests/features/`.
-- [ ] `uv run ruff check src scripts tests` and `uv run ruff format --check src scripts tests` report no problems.
-- [ ] `config/features.yml` lists exactly the 15 features of `docs/definition_scope_architecture.md`, with unique names, positions 1 to 15, a group allowed by the `features.feature_group` check of Supabase, and `known_on_saturday: true` for all of them. `humidity` and `wind_speed` are not in it.
-- [ ] On the synthetic races (clean, red flag, safety car), `race_target` reproduces the clean laps, field median and target derived by hand within 1e-9.
-- [ ] A driver with 14 clean laps gets `is_valid_row = False` and an empty target; one with 15 gets `True`; a driver with 12 still counts in the field's pooled median.
-- [ ] A lap under safety car, virtual safety car, red flag or track-wide yellow is not clean; a sector yellow does not remove it.
-- [ ] `quali_delta_pct` is never above 3 and `teammate_quali_gap` is computed from the capped times.
-- [ ] A Q session with an empty `laps` table but a valid `session_result` still gives `quali_delta_pct`, `grid_position` and `reached_q3`.
-- [ ] `race_features` runs on a copy of the fixture without the R session and returns the same values as with it.
-- [ ] Changing or deleting the races after the one being built does not change any form feature; the first 2026 race has empty form features, and the second one uses only the first.
-- [ ] `team_pace_this_circuit_prev` is empty for a circuit not raced the year before and for every 2026 row.
-- [ ] `build_race` returns the 23 columns in the order of `features.yml`, with no repeated `(year, round, driver)`, and passes the Pandera schema; the schema rejects a `quali_delta_pct` above 3 and an unknown `circuit_type`.
-- [ ] `schema_hash` is the same for the same file and changes when a limit in it changes.
-- [ ] `build_race` runs without schema errors over all the races held from 2023 to 2026 round 17 (87 races) with the data on disk.
-- [ ] Over the 56 train races, `build_race` equals the provisional dataset in every feature and in the target, except in the rows with 10 to 14 clean laps (9 rows in the EDA), which are now not valid: 1,041 valid rows. The result is in `DECISIONS.md`.
-- [ ] `notebooks/exploratory/provisional.py` and `tests/exploratory/` no longer exist, and `grep -rn provisional src scripts dags tests` finds nothing.
-- [ ] `config/training.json` and `supabase/migrations/` are unchanged, and `src/features/` makes no network call.
+- [x] `uv run pytest tests` passes without network access, including `tests/features/`.
+- [x] `uv run ruff check src scripts tests` and `uv run ruff format --check src scripts tests` report no problems.
+- [x] `config/features.yml` lists exactly the 15 features of `docs/definition_scope_architecture.md`, with unique names, positions 1 to 15, a group allowed by the `features.feature_group` check of Supabase, and `known_on_saturday: true` for all of them. `humidity` and `wind_speed` are not in it.
+- [x] On the synthetic races (clean, red flag, safety car), `race_target` reproduces the clean laps, field median and target derived by hand within 1e-9.
+- [x] A driver with 14 clean laps gets `is_valid_row = False` and an empty target; one with 15 gets `True`; a driver with 12 still counts in the field's pooled median.
+- [x] A lap under safety car, virtual safety car, red flag or track-wide yellow is not clean; a sector yellow does not remove it.
+- [x] `quali_delta_pct` is never above 3 and `teammate_quali_gap` is computed from the capped times.
+- [x] A Q session with an empty `laps` table but a valid `session_result` still gives `quali_delta_pct`, `grid_position` and `reached_q3`.
+- [x] `race_features` runs on a copy of the fixture without the R session and returns the same values as with it.
+- [x] Changing or deleting the races after the one being built does not change any form feature; the first 2026 race has empty form features, and the second one uses only the first.
+- [x] `team_pace_this_circuit_prev` is empty for a circuit not raced the year before and for every 2026 row.
+- [x] `build_race` returns the 23 columns in the order of `features.yml`, with no repeated `(year, round, driver)`, and passes the Pandera schema; the schema rejects a `quali_delta_pct` above 3 and an unknown `circuit_type`.
+- [x] `schema_hash` is the same for the same file and changes when a limit in it changes.
+- [x] `build_race` runs without schema errors over all the races held from 2023 to 2026 round 17 (87 races) with the data on disk.
+- [x] Over the 56 train races, `build_race` equals the provisional dataset in every feature and in the target, except in the rows with 10 to 14 clean laps (9 rows in the EDA), which are now not valid: 1,041 valid rows. The result is in `DECISIONS.md`.
+- [x] `notebooks/exploratory/provisional.py` and `tests/exploratory/` no longer exist, and `grep -rn provisional src scripts dags tests` finds nothing.
+- [x] `config/training.json` and `supabase/migrations/` are unchanged, and `src/features/` makes no network call.
 
 ---
 
