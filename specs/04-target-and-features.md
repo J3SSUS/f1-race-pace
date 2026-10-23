@@ -182,7 +182,7 @@ Steps 2 to 7 port the logic of `notebooks/exploratory/provisional.py` into `src/
 | The comparison with the provisional dataset shows differences beyond the 9 rows with 10 to 14 laps | The provisional code is not deleted until each difference is explained as a bug of the port or of the provisional code |
 | A session is missing or `invalid` on disk (the 2023 Hungary FP1) | A missing FP2 or sprint gives NaN features, never an error; only a missing Q or R session stops the build |
 | A team renamed or a driver who changes team in the middle of a season breaks the form history | Team names go through `config/teams.yml` and each row uses the team the driver had in that race |
-| A red flag or yellow that never gets a `CLEAR` or `GREEN` leaves an interval open | An interval still open at the end of the session closes at the last lap, and a test covers it |
+| A red flag or yellow that never gets a `CLEAR` or `GREEN` leaves an interval open | An interval still open at the end of the session runs to the end of time, so every later lap is neutralised, and a test covers it |
 
 ---
 
