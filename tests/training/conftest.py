@@ -1,9 +1,12 @@
+import sys
 from pathlib import Path
 
 import pytest
 from mlflow import MlflowClient
 
 from training.sampling import EXPERIMENT
+
+sys.path.append(str(Path(__file__).resolve().parents[1] / "features"))  # the in-memory Supabase fake
 
 
 @pytest.fixture
