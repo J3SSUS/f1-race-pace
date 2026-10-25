@@ -199,3 +199,4 @@ Runtime and tooling
 - 2026-10-25 · A trial that raises ends its run and the model run `FAILED` and the error propagates; it is never swallowed. The sampling run is not touched.
 - 2026-10-25 · One seed (the one in `config/training.json`) for the Optuna sampler and for the `random_state` of each model.
 - 2026-10-25 · `ALGORITHMS` maps config keys to the `model_versions.algorithm` values (`random_forest` → `rf`, `xgboost` → `xgb`, `lightgbm` → `lgbm`; the others keep their name), and the run tag `algorithm` uses it, so SPEC 09 needs no translation of its own.
+- 2026-10-25 · The fitted pipelines of the model runs are logged with `serialization_format="cloudpickle"`: MLflow's default (`skops`) rejects the untrusted types of XGBoost, LightGBM and CatBoost. The model is only loaded back by the tests and SPEC 09, in the same environment. The baseline and floor of SPEC 07 keep the default.

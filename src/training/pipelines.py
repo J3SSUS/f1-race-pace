@@ -31,6 +31,10 @@ ALGORITHMS = {  # config key -> model_versions.algorithm
 }
 
 
+def _to_float(X):
+    return X.astype("float64")
+
+
 def _estimator(model: str, params: dict[str, Any], seed: int):
     if model == "ridge":
         return Ridge(**params, random_state=seed)
@@ -57,7 +61,7 @@ def build_pipeline(model: str, params: dict[str, Any], imputation: str, seed: in
     numeric = [f.name for f in features if f.dtype != "category"]
     steps = [
         # nullable Int64 columns hold pd.NA, which the imputer cannot read: cast to float (NaN) first
-        ("cast", FunctionTransformer(lambda X: X.astype("float64"))),
+        ("cast", FunctionTransformer(_to_float)),
         # a feature that is all NaN in the train part of a fold is kept (filled with 0), so the shape never changes
         ("impute", SimpleImputer(strategy=imputation, keep_empty_features=True)),
     ]
