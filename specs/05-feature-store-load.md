@@ -1,6 +1,6 @@
 # SPEC 05 — Feature store load
 
-> **Status:** Approved
+> **Status:** Implemented
 > **Depends on:** SPEC 02 (reference data), SPEC 04 (target and features)
 > **Backlog:** Phase 3 of `docs/backlog.md` (feature store load: `features`, `feature_sets`, `feature_set_items`, `feature_values`, `ground_truth` and the long-to-wide helper); the sampling step, the split and the adversarial validation are SPEC 06
 > **Date:** 2026-10-25
@@ -132,25 +132,25 @@ Each step leaves `uv run pytest tests` green and can be committed on its own. Th
 
 ## Acceptance criteria
 
-- [ ] `uv run pytest tests` passes without network access, including the new tests of `src/features/store.py` and `scripts/load_features.py`.
-- [ ] `uv run ruff check src scripts tests` and `uv run ruff format --check src scripts tests` report no problems.
-- [ ] After `load_features` on the synthetic races, `features` has the 15 names of `config/features.yml`, `feature_sets` has one row `v1` with the catalog's `schema_hash`, and `feature_set_items` has the positions 1 to 15 with no gap.
-- [ ] `feature_values` has exactly 15 rows per entry, one per feature, including the features that are missing.
-- [ ] A missing feature has `value_num` and `value_text` both NULL; `circuit_type` has `value_text` set and `value_num` NULL; every other feature has `value_num` set or NULL and `value_text` NULL.
-- [ ] `ground_truth` has one row per entry; an invalid row has `actual_pace_delta_pct` NULL and `clean_laps` and `is_valid_row` set.
-- [ ] Running `load_features` twice leaves every table with the same rows and the same count; only `computed_at`, `pipeline_run_id`, `ingested_at` and `dag_run_id` may change.
-- [ ] If `feature_sets` already has `v1` with another `schema_hash`, `load_features` raises `StoreError`, writes nothing to `feature_values` or `ground_truth`, and leaves the existing `v1` rows untouched.
-- [ ] A race with no `race_entries` or a circuit missing in Supabase raises `StoreError` with a message that names `scripts/load_reference.py`, before writing any value.
-- [ ] If a race raises while building, `load_features` stops with `StoreError` naming its year and round, and the races after it are not written.
-- [ ] The `history` of each race holds only valid rows of earlier races: a test with three synthetic races shows that the form features of the third race equal those computed by `build_race` with the history of the first two.
-- [ ] `read_wide` returns the columns `entry_id`, the five identification columns, the three target columns and the 15 features, in that order, with the features in the order of `feature_set_items.position`.
-- [ ] Apart from `entry_id`, `read_wide` equals the output of `build_race` for the same races, and has the dtypes of `features.yml`.
-- [ ] `read_wide` returns the rows sorted by `(year, round, driver)` and returns all of them when the set has more than 1,000 entries (the fake caps each request at 1,000).
-- [ ] `scripts/load_features.py` prints one line per race and the final counts, exits with code 0 when it finishes and with code 1 when `StoreError` stops it.
-- [ ] No test and no module of `src/features/` other than `store.py` and the script imports `supabase`; `build_race` and the other feature functions still make no network call.
-- [ ] After the real load (step 9), `ground_truth` has 1,766 rows with 1,637 valid, `feature_values` has 26,490 rows and `read_wide` equals `build_race` over the 87 races held. The result is in `DECISIONS.md`.
-- [ ] A second real run of `scripts/load_features.py` leaves those same counts.
-- [ ] `config/features.yml`, `config/training.json` and `supabase/migrations/` are unchanged, and `.env` and the service key appear nowhere in the repo or in the output of the script.
+- [x] `uv run pytest tests` passes without network access, including the new tests of `src/features/store.py` and `scripts/load_features.py`.
+- [x] `uv run ruff check src scripts tests` and `uv run ruff format --check src scripts tests` report no problems.
+- [x] After `load_features` on the synthetic races, `features` has the 15 names of `config/features.yml`, `feature_sets` has one row `v1` with the catalog's `schema_hash`, and `feature_set_items` has the positions 1 to 15 with no gap.
+- [x] `feature_values` has exactly 15 rows per entry, one per feature, including the features that are missing.
+- [x] A missing feature has `value_num` and `value_text` both NULL; `circuit_type` has `value_text` set and `value_num` NULL; every other feature has `value_num` set or NULL and `value_text` NULL.
+- [x] `ground_truth` has one row per entry; an invalid row has `actual_pace_delta_pct` NULL and `clean_laps` and `is_valid_row` set.
+- [x] Running `load_features` twice leaves every table with the same rows and the same count; only `computed_at`, `pipeline_run_id`, `ingested_at` and `dag_run_id` may change.
+- [x] If `feature_sets` already has `v1` with another `schema_hash`, `load_features` raises `StoreError`, writes nothing to `feature_values` or `ground_truth`, and leaves the existing `v1` rows untouched.
+- [x] A race with no `race_entries` or a circuit missing in Supabase raises `StoreError` with a message that names `scripts/load_reference.py`, before writing any value.
+- [x] If a race raises while building, `load_features` stops with `StoreError` naming its year and round, and the races after it are not written.
+- [x] The `history` of each race holds only valid rows of earlier races: a test with three synthetic races shows that the form features of the third race equal those computed by `build_race` with the history of the first two.
+- [x] `read_wide` returns the columns `entry_id`, the five identification columns, the three target columns and the 15 features, in that order, with the features in the order of `feature_set_items.position`.
+- [x] Apart from `entry_id`, `read_wide` equals the output of `build_race` for the same races, and has the dtypes of `features.yml`.
+- [x] `read_wide` returns the rows sorted by `(year, round, driver)` and returns all of them when the set has more than 1,000 entries (the fake caps each request at 1,000).
+- [x] `scripts/load_features.py` prints one line per race and the final counts, exits with code 0 when it finishes and with code 1 when `StoreError` stops it.
+- [x] No test and no module of `src/features/` other than `store.py` and the script imports `supabase`; `build_race` and the other feature functions still make no network call.
+- [x] After the real load (step 9), `ground_truth` has 1,766 rows with 1,637 valid, `feature_values` has 26,490 rows and `read_wide` equals `build_race` over the 87 races held. The result is in `DECISIONS.md`.
+- [x] A second real run of `scripts/load_features.py` leaves those same counts.
+- [x] `config/features.yml`, `config/training.json` and `supabase/migrations/` are unchanged, and `.env` and the service key appear nowhere in the repo or in the output of the script.
 
 ---
 
