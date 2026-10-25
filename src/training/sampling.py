@@ -8,6 +8,7 @@ import hashlib
 import json
 import os
 import platform
+import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -18,6 +19,8 @@ import mlflow
 import mlflow.data
 import pandas as pd
 from dotenv import load_dotenv
+from mlflow import MlflowClient
+from mlflow.exceptions import MlflowException
 
 from common.config import TrainingConfig
 from common.supabase_io import ENV_PATH
@@ -262,3 +265,24 @@ def register_run(
             mlflow.log_input(dataset, context=name)
         mlflow.log_artifact(str(manifest_path))
     return run_id
+
+
+def read_split(run_id: str, tracking_uri: str | None = None) -> pd.DataFrame:
+    """`year`, `round` and `split` of every race of a sampling run, sorted by `(year, round)`.
+
+    Read from the `manifest.json` artifact of the run, so the split travels with it and nobody recomputes it.
+    """
+    client = MlflowClient(resolve_tracking_uri(tracking_uri))
+    try:
+        client.get_run(run_id)
+    except MlflowException as exc:
+        raise ValueError(f"No MLflow run '{run_id}': run scripts/sample.py and use the run_id it prints") from exc
+    with tempfile.TemporaryDirectory() as folder:
+        try:
+            path = client.download_artifacts(run_id, "manifest.json", folder)
+        except MlflowException as exc:
+            raise ValueError(f"MLflow run '{run_id}' has no manifest.json: it is not a sampling run") from exc
+        manifest = json.loads(Path(path).read_text())
+    rows = [(y, r, name) for name in ("train", "test") for y, r in manifest[name]["races"]]
+    frame = pd.DataFrame(rows, columns=["year", "round", "split"]).astype({"year": "int64", "round": "int64"})
+    return frame.sort_values(["year", "round"]).reset_index(drop=True)

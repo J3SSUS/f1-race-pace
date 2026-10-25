@@ -1,12 +1,14 @@
 import json
+import shutil
 from datetime import UTC, datetime
 from pathlib import Path
 
+import pandas as pd
 import pytest
 from mlflow import MlflowClient
 from test_manifest import config, make_parts
 
-from training.sampling import EXPERIMENT, register_run, resolve_tracking_uri
+from training.sampling import EXPERIMENT, read_split, register_run, resolve_tracking_uri
 
 NOW = datetime(2026, 10, 25, 12, 0, tzinfo=UTC)
 ISSUES = [{"year": 2024, "round": 2, "session": "S", "status": "failed"}]
@@ -99,3 +101,31 @@ def test_tracking_uri_comes_from_the_argument_or_the_environment(monkeypatch):
     monkeypatch.delenv("MLFLOW_TRACKING_URI")
     with pytest.raises(RuntimeError, match="MLFLOW_TRACKING_URI"):
         resolve_tracking_uri()
+
+
+def test_read_split_equals_the_registered_split(uri, tmp_path):
+    parts = make_parts()
+    run_id = register(uri, tmp_path, parts)
+    frame = read_split(run_id, uri)
+    assert list(frame.columns) == ["year", "round", "split"]
+    expected = pd.concat([parts.train, parts.test])[["year", "round", "split"]].reset_index(drop=True)
+    pd.testing.assert_frame_equal(frame, expected)
+
+
+def test_read_split_does_not_need_the_local_files(uri, tmp_path):
+    run_id = register(uri, tmp_path)
+    shutil.rmtree(tmp_path / "splits")
+    assert len(read_split(run_id, uri)) == 3
+
+
+def test_read_split_of_an_unknown_run_raises_a_clear_error(uri):
+    with pytest.raises(ValueError, match="No MLflow run 'nope'"):
+        read_split("nope", uri)
+
+
+def test_read_split_of_a_run_without_manifest_raises_a_clear_error(uri):
+    client = MlflowClient(uri)
+    experiment = client.get_experiment_by_name(EXPERIMENT)
+    other = client.create_run(experiment.experiment_id).info.run_id
+    with pytest.raises(ValueError, match="no manifest.json"):
+        read_split(other, uri)
