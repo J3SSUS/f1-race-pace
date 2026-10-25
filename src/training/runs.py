@@ -5,6 +5,7 @@ metrics and artifacts, and its lineage is the sampling run that fixed its data.
 """
 
 import tempfile
+from collections.abc import Callable
 from pathlib import Path
 
 import mlflow
@@ -12,8 +13,10 @@ import mlflow.sklearn
 from mlflow import MlflowClient
 from sklearn.base import clone
 
+from common.config import TrainingConfig, load_config
+from training.baseline import ALGORITHMS, FLOOR, QUALIFYING, median_floor, qualifying_baseline
 from training.cv import CvResult, cross_validate
-from training.data import TrainSet
+from training.data import TrainSet, load_train
 from training.metrics import METRICS
 from training.sampling import resolve_tracking_uri
 
@@ -70,3 +73,29 @@ def log_candidate(
             mlflow.log_artifact(str(path))
         mlflow.sklearn.log_model(clone(estimator).fit(train.X, train.y), name="model")
     return run.info.run_id, cv
+
+
+def run_references(
+    run_id: str,
+    config: TrainingConfig | None = None,
+    client=None,
+    tracking_uri: str | None = None,
+    loader: Callable = load_train,
+    on_run: Callable[[str, str], None] | None = None,
+) -> dict[str, CvResult]:
+    """The qualifying baseline and then the floor, as child runs of the sampling run `run_id`.
+
+    Loads the training set once. `on_run(name, child_run_id)` is called as each child run closes. Returns the
+    cross-validation of each reference by name.
+    """
+    config = config or load_config()
+    train = loader(run_id, client, tracking_uri=tracking_uri)
+    candidates = {QUALIFYING: qualifying_baseline(), FLOOR: median_floor()}
+    results = {}
+    for name, estimator in candidates.items():
+        child, results[name] = log_candidate(
+            name, ALGORITHMS[name], estimator, train, run_id, config.cv.folds, tracking_uri
+        )
+        if on_run:
+            on_run(name, child)
+    return results
