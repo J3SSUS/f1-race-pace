@@ -6,6 +6,7 @@ a race with a missing qualifying or race session stops the step before anything 
 
 import hashlib
 import json
+import os
 import platform
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -13,15 +14,21 @@ from datetime import UTC, datetime
 from importlib.metadata import version
 from pathlib import Path
 
+import mlflow
+import mlflow.data
 import pandas as pd
+from dotenv import load_dotenv
 
 from common.config import TrainingConfig
+from common.supabase_io import ENV_PATH
 from ingestion.reference import ReferenceDataError, ensure_race_entries
 from ingestion.schedule import expected_sessions
 from ingestion.session import RAW_DIR, ingest_session, session_dir
 
 # The sessions the features read, in the order they are listed in the race index. FP2 and S are read only when the
 # weekend has them (a sprint weekend has no FP2); Q and R are always needed.
+EXPERIMENT = "f1-race-pace"
+RUN_NAME = "sampling"
 PROJECT_DIR = Path(__file__).resolve().parents[2]
 SPLIT_DIR = PROJECT_DIR / "data" / "splits"
 SPLIT_RULE = "chronological by race; the first floor((1 - test_fraction) * n) races are train"
@@ -198,3 +205,60 @@ def write_manifest(manifest: dict, parts: Parts, split_dir: Path = SPLIT_DIR) ->
     path = folder / "manifest.json"
     path.write_text(json.dumps(manifest, indent=2))
     return path
+
+
+def resolve_tracking_uri(tracking_uri: str | None = None) -> str:
+    """The argument, or `MLFLOW_TRACKING_URI` from the environment or `.env`. Never falls back to a local folder."""
+    if tracking_uri:
+        return tracking_uri
+    load_dotenv(ENV_PATH)
+    uri = os.environ.get("MLFLOW_TRACKING_URI")
+    if not uri:
+        raise RuntimeError("Missing MLFLOW_TRACKING_URI: set it in .env or the environment (see .env.example)")
+    return uri
+
+
+def _cutoff_param(config: TrainingConfig) -> str:
+    cutoff = config.data.cutoff
+    return "none" if cutoff is None else f"{cutoff.year}-{cutoff.round}"
+
+
+def register_run(
+    parts: Parts,
+    config: TrainingConfig,
+    issues: list[dict],
+    *,
+    split_dir: Path = SPLIT_DIR,
+    tracking_uri: str | None = None,
+    now: datetime | None = None,
+) -> str:
+    """Open the parent run, write the manifest and the two Parquets, log params, datasets and manifest, and close it.
+
+    The run ends `FINISHED`, or `FAILED` if anything inside raises (the exception goes on). Returns the run id.
+    """
+    mlflow.set_tracking_uri(resolve_tracking_uri(tracking_uri))
+    mlflow.set_experiment(EXPERIMENT)
+    with mlflow.start_run(run_name=RUN_NAME, tags={"step": "sampling"}) as run:
+        run_id = run.info.run_id
+        manifest = build_manifest(run_id, parts, config, issues, split_dir, now)
+        manifest_path = write_manifest(manifest, parts, split_dir)
+        mlflow.log_params(
+            {
+                "first_year": config.data.first_year,
+                "last_year": config.data.last_year,
+                "cutoff": _cutoff_param(config),
+                "test_fraction": config.split.test_fraction,
+                "races": len(parts.train) + len(parts.test),
+                "train_races": len(parts.train),
+                "test_races": len(parts.test),
+            }
+        )
+        for name, frame, digest in (
+            ("train", parts.train, parts.train_digest),
+            ("test", parts.test, parts.test_digest),
+        ):
+            source = str(manifest_path.parent / f"{name}.parquet")
+            dataset = mlflow.data.from_pandas(frame, source=source, name=name, digest=digest)
+            mlflow.log_input(dataset, context=name)
+        mlflow.log_artifact(str(manifest_path))
+    return run_id
