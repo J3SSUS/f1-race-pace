@@ -5,18 +5,26 @@ a race with a missing qualifying or race session stops the step before anything 
 """
 
 import hashlib
+import json
+import platform
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
+from importlib.metadata import version
 from pathlib import Path
 
 import pandas as pd
 
+from common.config import TrainingConfig
 from ingestion.reference import ReferenceDataError, ensure_race_entries
 from ingestion.schedule import expected_sessions
 from ingestion.session import RAW_DIR, ingest_session, session_dir
 
 # The sessions the features read, in the order they are listed in the race index. FP2 and S are read only when the
 # weekend has them (a sprint weekend has no FP2); Q and R are always needed.
+PROJECT_DIR = Path(__file__).resolve().parents[2]
+SPLIT_DIR = PROJECT_DIR / "data" / "splits"
+SPLIT_RULE = "chronological by race; the first floor((1 - test_fraction) * n) races are train"
 SESSION_ORDER = ("FP2", "Q", "S", "R")
 OPTIONAL_SESSIONS = ("FP2", "S")
 
@@ -137,3 +145,56 @@ def build_parts(labels: pd.DataFrame, sessions: dict[tuple[int, int], list[str]]
     train = races[races["split"] == "train"].reset_index(drop=True)
     test = races[races["split"] == "test"].reset_index(drop=True)
     return Parts(train, test, part_digest(train), part_digest(test))
+
+
+def _shown(path: Path) -> str:
+    """The path as the manifest shows it: relative to the project when it is inside it."""
+    return path.relative_to(PROJECT_DIR).as_posix() if path.is_relative_to(PROJECT_DIR) else str(path)
+
+
+def _part_entry(frame: pd.DataFrame, digest: str, path: Path) -> dict:
+    races = [[int(y), int(r)] for y, r in zip(frame["year"], frame["round"], strict=True)]
+    return {"path": _shown(path), "rows": len(frame), "digest": digest, "races": races}
+
+
+def build_manifest(
+    run_id: str,
+    parts: Parts,
+    config: TrainingConfig,
+    issues: list[dict],
+    split_dir: Path = SPLIT_DIR,
+    now: datetime | None = None,
+) -> dict:
+    """The manifest of a sampling run, as in the data model of SPEC 06."""
+    cutoff = config.data.cutoff
+    folder = split_dir / run_id
+    return {
+        "run_id": run_id,
+        "generated_at": (now or datetime.now(UTC)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "split_rule": SPLIT_RULE,
+        "config": {
+            "first_year": config.data.first_year,
+            "last_year": config.data.last_year,
+            "cutoff": None if cutoff is None else {"year": cutoff.year, "round": cutoff.round},
+            "test_fraction": config.split.test_fraction,
+        },
+        "versions": {
+            "python": platform.python_version(),
+            "mlflow": version("mlflow"),
+            "pandas": version("pandas"),
+        },
+        "train": _part_entry(parts.train, parts.train_digest, folder / "train.parquet"),
+        "test": _part_entry(parts.test, parts.test_digest, folder / "test.parquet"),
+        "session_issues": issues,
+    }
+
+
+def write_manifest(manifest: dict, parts: Parts, split_dir: Path = SPLIT_DIR) -> Path:
+    """Write `train.parquet`, `test.parquet` and `manifest.json` in `split_dir/<run_id>/`; returns the manifest."""
+    folder = split_dir / manifest["run_id"]
+    folder.mkdir(parents=True, exist_ok=True)
+    parts.train.to_parquet(folder / "train.parquet", index=False)
+    parts.test.to_parquet(folder / "test.parquet", index=False)
+    path = folder / "manifest.json"
+    path.write_text(json.dumps(manifest, indent=2))
+    return path
