@@ -4,6 +4,7 @@ The split itself is defined in `training.split`. Here the sessions of every race
 a race with a missing qualifying or race session stops the step before anything is split.
 """
 
+import hashlib
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -12,7 +13,7 @@ import pandas as pd
 
 from ingestion.reference import ReferenceDataError, ensure_race_entries
 from ingestion.schedule import expected_sessions
-from ingestion.session import RAW_DIR, ingest_session
+from ingestion.session import RAW_DIR, ingest_session, session_dir
 
 # The sessions the features read, in the order they are listed in the race index. FP2 and S are read only when the
 # weekend has them (a sprint weekend has no FP2); Q and R are always needed.
@@ -88,3 +89,51 @@ def ingest_races(
     if problems:
         raise SamplingError(_problem_message(problems), problems)
     return report
+
+
+PART_COLUMNS = ["year", "round", "split", "sessions", "digest"]
+PART_DIGEST_LENGTH = 16
+
+
+@dataclass(frozen=True)
+class Parts:
+    train: pd.DataFrame  # one row per train race, `PART_COLUMNS`
+    test: pd.DataFrame
+    train_digest: str
+    test_digest: str
+
+
+def race_digest(year: int, round: int, sessions: list[str], raw_dir: Path = RAW_DIR) -> str:
+    """SHA-256 of the Parquet tables of the sessions of a race, in sorted path order.
+
+    The path inside the race (`Q/laps.parquet`) goes in with the bytes. `meta.json` is left out: it carries the run
+    id and the download date, so a forced download of identical data would change the digest. A session with no
+    Parquets on disk (a failed FP2 or S) adds nothing.
+    """
+    digest = hashlib.sha256()
+    race_dir = session_dir(year, round, "Q", raw_dir).parent
+    files = sorted(path for session in sessions for path in (race_dir / session).glob("*.parquet"))
+    for path in files:
+        digest.update(f"{path.relative_to(race_dir).as_posix()}\n".encode())
+        digest.update(path.read_bytes())
+    return digest.hexdigest()
+
+
+def part_digest(frame: pd.DataFrame) -> str:
+    """First 16 hex characters of the SHA-256 of the rows (`year`, `round`, `split`, race digest), in order."""
+    digest = hashlib.sha256()
+    for year, round, split, race in zip(frame["year"], frame["round"], frame["split"], frame["digest"], strict=True):
+        digest.update(f"{year},{round},{split},{race}\n".encode())
+    return digest.hexdigest()[:PART_DIGEST_LENGTH]
+
+
+def build_parts(labels: pd.DataFrame, sessions: dict[tuple[int, int], list[str]], raw_dir: Path = RAW_DIR) -> Parts:
+    """The train and test race indexes from the labels of `split_races` and the sessions read per race."""
+    races = labels.copy()
+    keys = list(zip(races["year"], races["round"], strict=True))
+    races["sessions"] = [",".join(sessions[(int(y), int(r))]) for y, r in keys]
+    races["digest"] = [race_digest(int(y), int(r), sessions[(int(y), int(r))], raw_dir) for y, r in keys]
+    races = races[PART_COLUMNS]
+    train = races[races["split"] == "train"].reset_index(drop=True)
+    test = races[races["split"] == "test"].reset_index(drop=True)
+    return Parts(train, test, part_digest(train), part_digest(test))
