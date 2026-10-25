@@ -21,6 +21,28 @@ from training.metrics import METRICS
 from training.sampling import resolve_tracking_uri
 
 
+def log_train_params(train: TrainSet, n_folds: int, extra: dict | None = None) -> None:
+    """The params every run that fits on all of train logs (candidates and model runs), plus `extra`."""
+    mlflow.log_params(
+        {
+            "n_folds": n_folds,
+            "train_races": len(train.meta[["year", "round"]].drop_duplicates()),
+            "train_rows": len(train.y),
+            "features": ",".join(train.X.columns),
+            "metric_main": "mae",
+            **(extra or {}),
+        }
+    )
+
+
+def log_cv_metrics(cv: CvResult) -> None:
+    """`fold_<m>` with step = fold number, and `cv_<m>_mean` and `cv_<m>_std`, in the active run."""
+    for number, fold in enumerate(cv.folds, start=1):
+        mlflow.log_metrics({f"fold_{m}": fold[m] for m in METRICS}, step=number)
+    for m in METRICS:
+        mlflow.log_metrics({f"cv_{m}_mean": cv.mean[m], f"cv_{m}_std": cv.std[m]})
+
+
 def run_candidate(
     name: str,
     algorithm: str,
@@ -54,19 +76,8 @@ def log_candidate(
     tags = {"step": "training", "algorithm": algorithm}
     with mlflow.start_run(run_name=name, experiment_id=experiment_id, tags=tags, parent_run_id=parent_run_id) as run:
         cv = cross_validate(estimator, train, n_folds)
-        mlflow.log_params(
-            {
-                "n_folds": n_folds,
-                "train_races": len(train.meta[["year", "round"]].drop_duplicates()),
-                "train_rows": len(train.y),
-                "features": ",".join(train.X.columns),
-                "metric_main": "mae",
-            }
-        )
-        for number, fold in enumerate(cv.folds, start=1):
-            mlflow.log_metrics({f"fold_{m}": fold[m] for m in METRICS}, step=number)
-        for m in METRICS:
-            mlflow.log_metrics({f"cv_{m}_mean": cv.mean[m], f"cv_{m}_std": cv.std[m]})
+        log_train_params(train, n_folds)
+        log_cv_metrics(cv)
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / "oof_predictions.parquet"
             cv.oof.to_parquet(path, index=False)
