@@ -22,7 +22,14 @@ CONFIG_PATH = Path(__file__).resolve().parents[2] / "config" / "training.json"
 ALLOWED_PARAMS: dict[str, set[str]] = {
     "ridge": {"alpha", "fit_intercept"},
     "elasticnet": {"alpha", "l1_ratio", "max_iter", "fit_intercept"},
-    "random_forest": {"n_estimators", "max_depth", "min_samples_split", "min_samples_leaf", "max_features"},
+    "random_forest": {
+        "n_estimators",
+        "max_depth",
+        "min_samples_split",
+        "min_samples_leaf",
+        "max_features",
+        "criterion",
+    },
     "xgboost": {
         "n_estimators",
         "max_depth",
@@ -32,6 +39,7 @@ ALLOWED_PARAMS: dict[str, set[str]] = {
         "min_child_weight",
         "reg_alpha",
         "reg_lambda",
+        "objective",
     },
     "lightgbm": {
         "n_estimators",
@@ -44,8 +52,9 @@ ALLOWED_PARAMS: dict[str, set[str]] = {
         "reg_alpha",
         "reg_lambda",
         "verbose",
+        "objective",
     },
-    "catboost": {"iterations", "depth", "learning_rate", "l2_leaf_reg", "subsample", "verbose"},
+    "catboost": {"iterations", "depth", "learning_rate", "l2_leaf_reg", "subsample", "verbose", "loss_function"},
 }
 IMPUTATIONS = {"median", "mean"}
 

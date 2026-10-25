@@ -31,6 +31,16 @@ def test_repo_config_loads():
     ]
 
 
+def test_tree_models_have_a_fixed_mae_loss():
+    models = load_config().enabled_models()
+    assert models["random_forest"]["criterion"] == Fixed("absolute_error")
+    assert models["xgboost"]["objective"] == Fixed("reg:absoluteerror")
+    assert models["lightgbm"]["objective"] == Fixed("l1")
+    assert models["catboost"]["loss_function"] == Fixed("MAE")
+    for name in ("ridge", "elasticnet"):
+        assert not {"criterion", "objective", "loss_function"} & set(models[name])
+
+
 def test_disabled_model_is_skipped(raw, tmp_path):
     raw["models"]["catboost"]["enabled"] = False
     assert "catboost" not in build(raw, tmp_path).enabled_models()
