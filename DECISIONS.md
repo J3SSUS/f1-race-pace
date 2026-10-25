@@ -188,3 +188,14 @@ Runtime and tooling
 - 2026-10-25 · Metrics are on the original scale, pooled over the rows of a fold, then mean and standard deviation (ddof 0) over the folds. R² is `sklearn.metrics.r2_score` (reference: mean of the evaluated `y_true`). The mean error is `mean(y_pred - y_true)`.
 - 2026-10-25 · Pairwise accuracy is computed inside each race over all pairs of drivers with different actual values (a tie between two predictions counts 0.5) and averaged over races; a constant predictor scores exactly 0.5. A race without pairs adds nothing, and if no race has a pair `score` raises.
 - 2026-10-25 · The out-of-fold predictions are logged as the artifact `oof_predictions.parquet` of each candidate's child run, so phase 5 can run diagnostics without refitting.
+
+## 2026-10-25 · The six models with Optuna (SPEC 08)
+
+- 2026-10-25 · The trees use a loss aligned with the main metric (MAE), fixed in `config/training.json` and not tuned: Random Forest `criterion=absolute_error`, XGBoost `objective=reg:absoluteerror`, LightGBM `objective=l1`, CatBoost `loss_function=MAE`. This extends `ALLOWED_PARAMS` in `src/common/config.py`. Ridge and ElasticNet keep squared error: a linear model with an MAE loss is another model (quantile regression), and the mismatch is accepted.
+- 2026-10-25 · `circuit_type` is one-hot encoded in all six models, with the three categories (`street`, `permanent`, `hybrid`) taken from `config/features.yml`, so a category missing in a fold does not change the columns. Only Ridge and ElasticNet get `StandardScaler`.
+- 2026-10-25 · The imputer is `SimpleImputer(keep_empty_features=True)`: a feature that is all NaN in the train part of a fold (first folds) is kept and filled with 0, so the shape of the matrix never changes. The strategy (`median` or `mean`) is an Optuna hyperparameter inside every pipeline, boosters included.
+- 2026-10-25 · One Optuna study per model (TPE, 50 trials, seed 42). The objective is the mean MAE of the temporal CV of SPEC 07, on the original scale; the best trial is refit on all of train.
+- 2026-10-25 · Run hierarchy in MLflow: sampling run → one run per model (`step=training`) → one child run per trial (`step=tuning`, tag `trial`). Only the model run stores `model/`, `oof_predictions.parquet` and `trials.parquet`; trial runs store no artifacts.
+- 2026-10-25 · A trial that raises ends its run and the model run `FAILED` and the error propagates; it is never swallowed. The sampling run is not touched.
+- 2026-10-25 · One seed (the one in `config/training.json`) for the Optuna sampler and for the `random_state` of each model.
+- 2026-10-25 · `ALGORITHMS` maps config keys to the `model_versions.algorithm` values (`random_forest` → `rf`, `xgboost` → `xgb`, `lightgbm` → `lgbm`; the others keep their name), and the run tag `algorithm` uses it, so SPEC 09 needs no translation of its own.
