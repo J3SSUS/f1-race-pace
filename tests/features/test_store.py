@@ -1,14 +1,19 @@
+import json
 from dataclasses import replace
 
 import pytest
 from fake_supabase import FakeSupabase
 
+from features import build_race
 from features.catalog import load_catalog
+from features.form import empty_history
 from features.race_info import RaceInfo
 from features.store import (
     PAGE_SIZE,
     LoadResult,
     StoreError,
+    feature_value_rows,
+    ground_truth_rows,
     load_reference_index,
     read_table,
     write_feature_set,
@@ -190,3 +195,88 @@ def test_the_reference_index_reads_past_the_first_page():
     tables["race_entries"] += [{"entry_id": 1000 + i, "race_id": 20, "driver_id": 3} for i in range(1200)]
     index = load_reference_index(FakeSupabase(tables))
     assert index[(2024, 2)].entry_ids["LEC"] == 2199
+
+
+RUN = "run-1"
+CODES = ["AAA", "BBB", "CCC", "HHH", "DDD", "EEE", "FFF", "GGG"]
+ENTRY_IDS = {code: 100 + i for i, code in enumerate(CODES)}
+
+
+@pytest.fixture
+def built(raw_dir):
+    """Round 1 of the synthetic races: HHH (12 clean laps) and GGG (8) are not valid; there is no FP2 or sprint."""
+    frame = build_race(RaceInfo(2024, 1, "Monaco", "street"), empty_history(), raw_dir)
+    return frame, write_feature_set(FakeSupabase(), CATALOG)
+
+
+def value_of(rows, written, driver, name):
+    (row,) = [r for r in rows if r["entry_id"] == ENTRY_IDS[driver] and r["feature_id"] == written.feature_ids[name]]
+    return row
+
+
+def test_feature_values_have_one_row_per_entry_and_feature(built):
+    frame, written = built
+    rows = feature_value_rows(frame, ENTRY_IDS, written, CATALOG, RUN)
+    assert len(rows) == 8 * 15
+    assert {(r["entry_id"], r["feature_id"]) for r in rows} == {
+        (e, f) for e in ENTRY_IDS.values() for f in written.feature_ids.values()
+    }
+    assert all(
+        set(r) == {"entry_id", "feature_id", "feature_set_id", "value_num", "value_text", "pipeline_run_id"}
+        for r in rows
+    )
+    assert {(r["feature_set_id"], r["pipeline_run_id"]) for r in rows} == {(written.feature_set_id, RUN)}
+
+
+def test_numbers_and_flags_go_to_value_num_and_the_category_to_value_text(built):
+    frame, written = built
+    rows = feature_value_rows(frame, ENTRY_IDS, written, CATALOG, RUN)
+    assert value_of(rows, written, "AAA", "reached_q3")["value_num"] == 1.0
+    assert value_of(rows, written, "DDD", "reached_q3")["value_num"] == 0.0
+    assert value_of(rows, written, "AAA", "rain_flag")["value_num"] == 0.0
+    assert value_of(rows, written, "BBB", "grid_position")["value_num"] == 2.0
+    assert value_of(rows, written, "GGG", "quali_delta_pct")["value_num"] == 3.0
+    assert value_of(rows, written, "AAA", "reached_q3")["value_text"] is None
+    circuit_type = value_of(rows, written, "AAA", "circuit_type")
+    assert (circuit_type["value_num"], circuit_type["value_text"]) == (None, "street")
+
+
+def test_a_missing_feature_keeps_its_row_with_both_values_null(built):
+    frame, written = built
+    rows = feature_value_rows(frame, ENTRY_IDS, written, CATALOG, RUN)
+    for name in ("fp_tyre_deg", "sprint_pace_delta_pct", "driver_pace_last3"):
+        missing = value_of(rows, written, "AAA", name)
+        assert (missing["value_num"], missing["value_text"]) == (None, None)
+
+
+def test_the_rows_are_plain_python_values_that_json_can_carry(built):
+    frame, written = built
+    json.dumps(feature_value_rows(frame, ENTRY_IDS, written, CATALOG, RUN))
+    json.dumps(ground_truth_rows(frame, ENTRY_IDS, RUN))
+
+
+def test_ground_truth_has_one_row_per_entry_and_no_target_when_not_valid(built):
+    frame, _ = built
+    rows = {r["entry_id"]: r for r in ground_truth_rows(frame, ENTRY_IDS, RUN)}
+    assert len(rows) == 8
+    assert rows[ENTRY_IDS["AAA"]] == {
+        "entry_id": 100,
+        "actual_pace_delta_pct": pytest.approx(-1.315789, abs=1e-6),
+        "clean_laps": 27,
+        "is_valid_row": True,
+        "dag_run_id": RUN,
+    }
+    for code, laps in (("HHH", 12), ("GGG", 8)):
+        row = rows[ENTRY_IDS[code]]
+        assert (row["actual_pace_delta_pct"], row["clean_laps"], row["is_valid_row"]) == (None, laps, False)
+
+
+def test_a_driver_without_an_entry_names_the_race_and_the_code(built):
+    frame, written = built
+    entry_ids = {code: i for code, i in ENTRY_IDS.items() if code != "FFF"}
+    for build in (
+        lambda: feature_value_rows(frame, entry_ids, written, CATALOG, RUN),
+        lambda: ground_truth_rows(frame, entry_ids, RUN),
+    ):
+        with pytest.raises(StoreError, match=r"2024 round 1: driver FFF.*scripts/load_reference\.py"):
+            build()

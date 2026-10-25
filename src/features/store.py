@@ -6,6 +6,8 @@ service key. This is the only module of `features` that talks to Supabase.
 
 from dataclasses import dataclass
 
+import pandas as pd
+
 from common.supabase_io import upsert_rows
 from features.catalog import Catalog
 from features.race_info import RaceInfo
@@ -124,3 +126,57 @@ def load_reference_index(client) -> dict[tuple[int, int], RaceRef]:
         info = RaceInfo(race["year"], race["round"], circuit["name"], circuit["circuit_type"])
         index[(race["year"], race["round"])] = RaceRef(info, entries[race["race_id"]])
     return index
+
+
+def _entry_id(entry_ids: dict[str, int], row: dict) -> int:
+    try:
+        return entry_ids[row["driver"]]
+    except KeyError:
+        raise StoreError(
+            f"race {row['year']} round {row['round']}: driver {row['driver']} has no race_entries row: {LOAD_REFERENCE}"
+        ) from None
+
+
+def feature_value_rows(
+    frame: pd.DataFrame, entry_ids: dict[str, int], feature_set: FeatureSet, catalog: Catalog, run_id: str
+) -> list[dict]:
+    """The `feature_values` rows of one race: every feature of the catalog for every row of `frame`.
+
+    Numbers and flags go to `value_num`, a category to `value_text`, and a missing value leaves both NULL, so a
+    feature never lacks its row.
+    """
+    rows = []
+    for record in frame.to_dict("records"):
+        entry_id = _entry_id(entry_ids, record)
+        for feature in catalog.features:
+            value = record[feature.name]
+            missing = bool(pd.isna(value))
+            is_text = feature.dtype == "category"
+            rows.append(
+                {
+                    "entry_id": entry_id,
+                    "feature_id": feature_set.feature_ids[feature.name],
+                    "feature_set_id": feature_set.feature_set_id,
+                    "value_num": None if missing or is_text else float(value),
+                    "value_text": None if missing or not is_text else str(value),
+                    "pipeline_run_id": run_id,
+                }
+            )
+    return rows
+
+
+def ground_truth_rows(frame: pd.DataFrame, entry_ids: dict[str, int], run_id: str) -> list[dict]:
+    """The `ground_truth` rows of one race: the target is NULL when the row is not valid."""
+    rows = []
+    for record in frame.to_dict("records"):
+        target = record["race_pace_delta_pct"]
+        rows.append(
+            {
+                "entry_id": _entry_id(entry_ids, record),
+                "actual_pace_delta_pct": None if pd.isna(target) else float(target),
+                "clean_laps": int(record["clean_laps"]),
+                "is_valid_row": bool(record["is_valid_row"]),
+                "dag_run_id": run_id,
+            }
+        )
+    return rows
