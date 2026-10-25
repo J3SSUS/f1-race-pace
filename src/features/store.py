@@ -4,13 +4,19 @@ Every write is an upsert, so a rerun never duplicates. Errors name the table and
 service key. This is the only module of `features` that talks to Supabase.
 """
 
+import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 
 import pandas as pd
 
 from common.supabase_io import upsert_rows
-from features.catalog import Catalog
+from features.build import build_race
+from features.catalog import Catalog, load_catalog
+from features.form import HISTORY_COLUMNS, empty_history
 from features.race_info import RaceInfo
+from ingestion.session import RAW_DIR
 
 PAGE_SIZE = 1000  # PostgREST returns at most this many rows per request
 LOAD_REFERENCE = "run scripts/load_reference.py first"
@@ -180,3 +186,56 @@ def ground_truth_rows(frame: pd.DataFrame, entry_ids: dict[str, int], run_id: st
             }
         )
     return rows
+
+
+def load_features(
+    client,
+    *,
+    version: str | None = None,
+    raw_dir: Path = RAW_DIR,
+    first_year: int | None = None,
+    last_year: int | None = None,
+    run_id: str | None = None,
+    log: Callable[[str], None] | None = None,
+) -> LoadResult:
+    """Rebuild every race in Supabase, in order, and write its features and its actual target.
+
+    `version` is the feature set to fill (default: the version in `config/features.yml`). The form features need the
+    targets of earlier races, so the history grows as the races go by and the load always starts from the first race
+    of the database; `first_year` and `last_year` only limit what is written. It stops at the first race that fails,
+    with a `StoreError` that names it: rows already written are valid and a rerun continues without duplicates.
+    """
+    catalog = load_catalog()
+    run_id = run_id or uuid.uuid4().hex
+    index = load_reference_index(client)
+    feature_set = write_feature_set(client, catalog, version or catalog.version)
+
+    history = empty_history()
+    races = entries = feature_values = ground_truth = valid_rows = 0
+    for (year, round), ref in index.items():
+        if last_year is not None and year > last_year:
+            break
+        try:
+            frame = build_race(ref.info, history, raw_dir)
+            values = feature_value_rows(frame, ref.entry_ids, feature_set, catalog, run_id)
+            truth = ground_truth_rows(frame, ref.entry_ids, run_id)
+            if first_year is None or year >= first_year:
+                upsert_rows(client, "feature_values", values, "entry_id,feature_id,feature_set_id")
+                upsert_rows(client, "ground_truth", truth, "entry_id")
+        except StoreError:
+            raise
+        except Exception as exc:
+            raise StoreError(f"race {year} round {round} failed ({type(exc).__name__}): {exc}") from exc
+
+        valid = frame[frame["is_valid_row"]]
+        new_history = valid[HISTORY_COLUMNS]
+        history = new_history if history.empty else pd.concat([history, new_history], ignore_index=True)
+        if first_year is None or year >= first_year:
+            races += 1
+            entries += len(frame)
+            feature_values += len(values)
+            ground_truth += len(truth)
+            valid_rows += len(valid)
+            if log:
+                log(f"{year} round {round}: {len(frame)} entries, {len(valid)} valid")
+    return LoadResult(run_id, races, entries, feature_values, ground_truth, valid_rows)

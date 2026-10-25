@@ -1,12 +1,14 @@
 import json
+import shutil
 from dataclasses import replace
 
+import pandas as pd
 import pytest
 from fake_supabase import FakeSupabase
 
 from features import build_race
 from features.catalog import load_catalog
-from features.form import empty_history
+from features.form import HISTORY_COLUMNS, empty_history
 from features.race_info import RaceInfo
 from features.store import (
     PAGE_SIZE,
@@ -14,6 +16,7 @@ from features.store import (
     StoreError,
     feature_value_rows,
     ground_truth_rows,
+    load_features,
     load_reference_index,
     read_table,
     write_feature_set,
@@ -280,3 +283,119 @@ def test_a_driver_without_an_entry_names_the_race_and_the_code(built):
     ):
         with pytest.raises(StoreError, match=r"2024 round 1: driver FFF.*scripts/load_reference\.py"):
             build()
+
+
+def synthetic_reference(rounds=(1, 2, 3)):
+    """The reference tables of Supabase for the synthetic races: one circuit, 8 drivers, 8 entries per race."""
+    return {
+        "circuits": [{"circuit_id": 1, "name": "Synthetic", "circuit_type": "permanent"}],
+        "drivers": [{"driver_id": i + 1, "code": code} for i, code in enumerate(CODES)],
+        "races": [{"race_id": r, "year": 2024, "round": r, "circuit_id": 1} for r in rounds],
+        "race_entries": [
+            {"entry_id": r * 100 + i, "race_id": r, "driver_id": i + 1} for r in rounds for i in range(len(CODES))
+        ],
+    }
+
+
+def build_in_order(raw_dir, rounds):
+    """The synthetic races built one by one with `build_race`, each with the valid rows of the earlier ones."""
+    history, frames = empty_history(), []
+    for round in rounds:
+        frame = build_race(RaceInfo(2024, round, "Synthetic", "permanent"), history, raw_dir)
+        valid = frame[frame["is_valid_row"]][HISTORY_COLUMNS]
+        history = valid if history.empty else pd.concat([history, valid], ignore_index=True)
+        frames.append(frame)
+    return frames
+
+
+def test_load_features_writes_the_hand_counted_rows_of_two_races(raw_dir):
+    client = FakeSupabase(synthetic_reference((1, 2)))
+    lines = []
+    result = load_features(client, raw_dir=raw_dir, run_id=RUN, log=lines.append)
+    first, second = (int(f["is_valid_row"].sum()) for f in build_in_order(raw_dir, (1, 2)))
+    assert first == 6  # AAA, BBB, CCC, DDD, EEE, FFF; HHH has 12 clean laps and GGG 8
+    assert result == LoadResult(
+        RUN, races=2, entries=16, feature_values=240, ground_truth=16, valid_rows=first + second
+    )
+    assert (client.count("features"), client.count("feature_values"), client.count("ground_truth")) == (15, 240, 16)
+    assert client.tables["feature_sets"][0]["version"] == "v1"
+    assert lines == [f"2024 round 1: 8 entries, {first} valid", f"2024 round 2: 8 entries, {second} valid"]
+    assert {row["pipeline_run_id"] for row in client.tables["feature_values"]} == {RUN}
+    assert {row["dag_run_id"] for row in client.tables["ground_truth"]} == {RUN}
+
+
+def test_a_second_run_leaves_every_table_as_it_was(raw_dir):
+    client = FakeSupabase(synthetic_reference((1, 2)))
+    load_features(client, raw_dir=raw_dir, run_id=RUN)
+    before = snapshot(client)
+    load_features(client, raw_dir=raw_dir, run_id=RUN)
+    assert snapshot(client) == before
+
+
+def test_another_run_id_only_changes_the_run_columns(raw_dir):
+    client = FakeSupabase(synthetic_reference((1, 2)))
+    load_features(client, raw_dir=raw_dir, run_id="one")
+    first = snapshot(client)
+    result = load_features(client, raw_dir=raw_dir, run_id="two")
+    second = snapshot(client)
+    assert result.run_id == "two"
+    assert {row["pipeline_run_id"] for row in second["feature_values"]} == {"two"}
+    for table, column in (("feature_values", "pipeline_run_id"), ("ground_truth", "dag_run_id")):
+        assert [{k: v for k, v in r.items() if k != column} for r in first[table]] == [
+            {k: v for k, v in r.items() if k != column} for r in second[table]
+        ]
+
+
+def test_the_form_features_of_a_race_use_the_valid_rows_of_the_earlier_ones(raw_dir):
+    client = FakeSupabase(synthetic_reference())
+    load_features(client, raw_dir=raw_dir, run_id=RUN)
+    third = build_in_order(raw_dir, (1, 2, 3))[2].set_index("driver")
+    feature_id = {r["name"]: r["feature_id"] for r in client.tables["features"]}["driver_pace_last3"]
+    stored = {r["entry_id"]: r["value_num"] for r in client.tables["feature_values"] if r["feature_id"] == feature_id}
+    expected = third.loc["AAA", "driver_pace_last3"]
+    assert not pd.isna(expected)
+    assert stored[300] == pytest.approx(expected, abs=1e-12)
+
+
+def test_a_race_that_fails_stops_the_load_and_the_later_race_is_not_written(raw_dir):
+    shutil.rmtree(raw_dir / "2024" / "02")
+    client = FakeSupabase(synthetic_reference())
+    with pytest.raises(StoreError, match="race 2024 round 2 failed"):
+        load_features(client, raw_dir=raw_dir, run_id=RUN)
+    assert {r["entry_id"] // 100 for r in client.tables["feature_values"]} == {1}
+    assert {r["entry_id"] // 100 for r in client.tables["ground_truth"]} == {1}
+
+
+def test_a_missing_entry_stops_before_writing_anything(raw_dir):
+    tables = synthetic_reference()
+    tables["race_entries"] = [e for e in tables["race_entries"] if e["race_id"] != 2]
+    client = FakeSupabase(tables)
+    with pytest.raises(StoreError, match=r"scripts/load_reference\.py"):
+        load_features(client, raw_dir=raw_dir, run_id=RUN)
+    assert client.writes == []
+
+
+def test_a_driver_without_an_entry_names_the_race_and_the_driver(raw_dir):
+    tables = synthetic_reference((1,))
+    tables["drivers"] = [d for d in tables["drivers"] if d["code"] != "FFF"]
+    tables["race_entries"] = [e for e in tables["race_entries"] if e["driver_id"] != 7]
+    with pytest.raises(StoreError, match=r"race 2024 round 1: driver FFF"):
+        load_features(FakeSupabase(tables), raw_dir=raw_dir, run_id=RUN)
+
+
+def test_a_feature_set_with_another_hash_stops_before_any_value(raw_dir):
+    tables = synthetic_reference((1,))
+    tables["feature_sets"] = [{"feature_set_id": 1, "version": "v1", "schema_hash": "old"}]
+    client = FakeSupabase(tables)
+    with pytest.raises(StoreError, match="new version"):
+        load_features(client, raw_dir=raw_dir, run_id=RUN)
+    assert client.count("feature_values") == 0 and client.count("ground_truth") == 0
+    assert client.tables["feature_sets"] == [{"feature_set_id": 1, "version": "v1", "schema_hash": "old"}]
+
+
+def test_the_year_limits_only_change_what_is_written(raw_dir):
+    client = FakeSupabase(synthetic_reference())
+    result = load_features(client, raw_dir=raw_dir, run_id=RUN, last_year=2023)
+    assert (result.races, result.feature_values) == (0, 0) and client.count("feature_values") == 0
+    result = load_features(client, raw_dir=raw_dir, run_id=RUN, first_year=2024, last_year=2024)
+    assert (result.races, result.feature_values, result.ground_truth) == (3, 360, 24)
