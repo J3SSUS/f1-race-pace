@@ -14,14 +14,6 @@ NOW = datetime(2026, 10, 25, 12, 0, tzinfo=UTC)
 ISSUES = [{"year": 2024, "round": 2, "session": "S", "status": "failed"}]
 
 
-@pytest.fixture
-def uri(tmp_path: Path) -> str:
-    """A SQLite store in the temporary folder, with the experiment's artifacts there too (not in the cwd)."""
-    store = f"sqlite:///{tmp_path / 'mlflow.db'}"
-    MlflowClient(store).create_experiment(EXPERIMENT, artifact_location=(tmp_path / "artifacts").as_uri())
-    return store
-
-
 def register(uri, tmp_path, parts=None, **kw):
     return register_run(
         parts or make_parts(), config(), ISSUES, split_dir=tmp_path / "splits", tracking_uri=uri, now=NOW, **kw

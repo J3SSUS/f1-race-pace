@@ -22,11 +22,12 @@ from dotenv import load_dotenv
 from mlflow import MlflowClient
 from mlflow.exceptions import MlflowException
 
-from common.config import TrainingConfig
+from common.config import TrainingConfig, load_config
 from common.supabase_io import ENV_PATH
 from ingestion.reference import ReferenceDataError, ensure_race_entries
-from ingestion.schedule import expected_sessions
+from ingestion.schedule import expected_sessions, load_schedules
 from ingestion.session import RAW_DIR, ingest_session, session_dir
+from training.split import select_races, split_races
 
 # The sessions the features read, in the order they are listed in the race index. FP2 and S are read only when the
 # weekend has them (a sprint weekend has no FP2); Q and R are always needed.
@@ -286,3 +287,58 @@ def read_split(run_id: str, tracking_uri: str | None = None) -> pd.DataFrame:
     rows = [(y, r, name) for name in ("train", "test") for y, r in manifest[name]["races"]]
     frame = pd.DataFrame(rows, columns=["year", "round", "split"]).astype({"year": "int64", "round": "int64"})
     return frame.sort_values(["year", "round"]).reset_index(drop=True)
+
+
+@dataclass(frozen=True)
+class SamplingResult:
+    run_id: str
+    train_races: int
+    test_races: int
+    train_digest: str
+    test_digest: str
+    manifest_path: Path
+
+
+def run_sampling(
+    config: TrainingConfig | None = None,
+    *,
+    client=None,
+    raw_dir: Path = RAW_DIR,
+    split_dir: Path = SPLIT_DIR,
+    tracking_uri: str | None = None,
+    schedule: pd.DataFrame | None = None,
+    ingest: Callable = ingest_session,
+    ensure: Callable = ensure_race_entries,
+    today: datetime | None = None,
+    log: Callable[[str], None] | None = None,
+) -> SamplingResult:
+    """The `sampling` step: select the races, split them, ingest and check their sessions, register the run.
+
+    Raises `SamplingError` before any MLflow run is opened if there are no races, if the split leaves the train or
+    the test part empty, or if a Q or R session cannot be used. `config=None` loads `config/training.json`.
+    """
+    config = config or load_config()
+    if schedule is None:
+        cutoff = config.data.cutoff
+        last_year = config.data.last_year if cutoff is None else cutoff.year
+        schedule = load_schedules(config.data.first_year, last_year)
+    races = select_races(schedule, config, today)
+    labels = split_races(races, config.split.test_fraction)
+    counts = labels["split"].value_counts()
+    if counts.get("train", 0) == 0 or counts.get("test", 0) == 0:
+        raise SamplingError(
+            f"no races to split: {len(races)} race(s) held, test_fraction {config.split.test_fraction} leaves "
+            f"{counts.get('train', 0)} for train and {counts.get('test', 0)} for test"
+        )
+
+    report = ingest_races(races, schedule, client=client, raw_dir=raw_dir, ingest=ingest, ensure=ensure, log=log)
+    parts = build_parts(labels, report.sessions, raw_dir)
+    run_id = register_run(parts, config, report.issues, split_dir=split_dir, tracking_uri=tracking_uri)
+    return SamplingResult(
+        run_id=run_id,
+        train_races=len(parts.train),
+        test_races=len(parts.test),
+        train_digest=parts.train_digest,
+        test_digest=parts.test_digest,
+        manifest_path=split_dir / run_id / "manifest.json",
+    )
