@@ -115,6 +115,23 @@ def tune_model(
     return TuneResult(model, run.info.run_id, best, best_params, best_cv, trials)
 
 
+def select_models(config: TrainingConfig, models: list[str] | None = None) -> dict[str, dict[str, ParamSpec]]:
+    """The enabled models of the config in config order, or only the ones in `models`.
+
+    A name that is not an enabled model raises `ValueError`.
+    """
+    enabled = config.enabled_models()
+    if models is None:
+        return enabled
+    unknown = [m for m in models if m not in ALGORITHMS]
+    if unknown:
+        raise ValueError(f"unknown models {unknown}; allowed: {sorted(ALGORITHMS)}")
+    disabled = [m for m in models if m not in enabled]
+    if disabled:
+        raise ValueError(f"models {disabled} are disabled in the config; enabled: {list(enabled)}")
+    return {name: specs for name, specs in enabled.items() if name in models}
+
+
 def tune_models(
     run_id: str,
     config: TrainingConfig | None = None,
@@ -130,15 +147,7 @@ def tune_models(
     loaded. Loads the training set once. `on_model(name, model_run_id)` is called as each model run closes.
     """
     config = config or load_config()
-    enabled = config.enabled_models()
-    if models is not None:
-        unknown = [m for m in models if m not in ALGORITHMS]
-        if unknown:
-            raise ValueError(f"unknown models {unknown}; allowed: {sorted(ALGORITHMS)}")
-        disabled = [m for m in models if m not in enabled]
-        if disabled:
-            raise ValueError(f"models {disabled} are disabled in the config; enabled: {list(enabled)}")
-        enabled = {name: specs for name, specs in enabled.items() if name in models}
+    enabled = select_models(config, models)
     train = loader(run_id, client, tracking_uri=tracking_uri)
     results = {}
     for name, specs in enabled.items():
