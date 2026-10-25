@@ -19,6 +19,7 @@ from features.store import (
     load_features,
     load_reference_index,
     read_table,
+    read_wide,
     write_feature_set,
 )
 
@@ -203,6 +204,8 @@ def test_the_reference_index_reads_past_the_first_page():
 RUN = "run-1"
 CODES = ["AAA", "BBB", "CCC", "HHH", "DDD", "EEE", "FFF", "GGG"]
 ENTRY_IDS = {code: 100 + i for i, code in enumerate(CODES)}
+TEAMS = ["Alpha", "Beta", "Gamma", "Delta"]
+TEAM_OF = dict(zip(CODES, ["Alpha", "Alpha", "Beta", "Delta", "Beta", "Gamma", "Gamma", "Delta"], strict=True))
 
 
 @pytest.fixture
@@ -290,9 +293,12 @@ def synthetic_reference(rounds=(1, 2, 3)):
     return {
         "circuits": [{"circuit_id": 1, "name": "Synthetic", "circuit_type": "permanent"}],
         "drivers": [{"driver_id": i + 1, "code": code} for i, code in enumerate(CODES)],
+        "teams": [{"team_id": i + 1, "name": name} for i, name in enumerate(TEAMS)],
         "races": [{"race_id": r, "year": 2024, "round": r, "circuit_id": 1} for r in rounds],
         "race_entries": [
-            {"entry_id": r * 100 + i, "race_id": r, "driver_id": i + 1} for r in rounds for i in range(len(CODES))
+            {"entry_id": r * 100 + i, "race_id": r, "driver_id": i + 1, "team_id": TEAMS.index(TEAM_OF[code]) + 1}
+            for r in rounds
+            for i, code in enumerate(CODES)
         ],
     }
 
@@ -399,3 +405,97 @@ def test_the_year_limits_only_change_what_is_written(raw_dir):
     assert (result.races, result.feature_values) == (0, 0) and client.count("feature_values") == 0
     result = load_features(client, raw_dir=raw_dir, run_id=RUN, first_year=2024, last_year=2024)
     assert (result.races, result.feature_values, result.ground_truth) == (3, 360, 24)
+
+
+def test_read_wide_equals_what_build_race_returned(raw_dir):
+    client = FakeSupabase(synthetic_reference())
+    load_features(client, raw_dir=raw_dir, run_id=RUN)
+    wide = read_wide(client)
+    expected = pd.concat(build_in_order(raw_dir, (1, 2, 3)), ignore_index=True)
+    expected = expected.sort_values(["year", "round", "driver"], ignore_index=True)
+    assert list(wide.columns) == ["entry_id", *expected.columns]
+    assert wide["entry_id"].tolist() == [r * 100 + CODES.index(code) for r in (1, 2, 3) for code in sorted(CODES)]
+    pd.testing.assert_frame_equal(wide.drop(columns="entry_id"), expected)
+
+
+def wide_tables(entries=1200):
+    """A hand-made feature set: positions opposite to the feature ids, two races inserted in reverse order."""
+    rows = range(1, entries + 1)
+    return {
+        "circuits": [{"circuit_id": 1, "name": "C1"}],
+        "drivers": [{"driver_id": 1, "code": "ZZZ"}, {"driver_id": 2, "code": "AAA"}],
+        "teams": [{"team_id": 1, "name": "T1"}],
+        "races": [
+            {"race_id": 2, "year": 2024, "round": 2, "circuit_id": 1},
+            {"race_id": 1, "year": 2024, "round": 1, "circuit_id": 1},
+        ],
+        "race_entries": [
+            {"entry_id": i, "race_id": 1 + i % 2, "driver_id": 1 + (i // 2) % 2, "team_id": 1} for i in rows
+        ],
+        "features": [
+            {"feature_id": 1, "name": "x", "dtype": "float"},
+            {"feature_id": 2, "name": "kind", "dtype": "category"},
+        ],
+        "feature_sets": [{"feature_set_id": 1, "version": "v1"}, {"feature_set_id": 2, "version": "v2"}],
+        "feature_set_items": [
+            {"feature_set_id": 1, "feature_id": 1, "position": 2},
+            {"feature_set_id": 1, "feature_id": 2, "position": 1},
+            {"feature_set_id": 2, "feature_id": 1, "position": 1},
+        ],
+        "feature_values": [
+            *(
+                {"entry_id": i, "feature_id": 1, "feature_set_id": 1, "value_num": float(i), "value_text": None}
+                for i in rows
+            ),
+            *(
+                {"entry_id": i, "feature_id": 2, "feature_set_id": 1, "value_num": None, "value_text": f"k{i % 3}"}
+                for i in rows
+            ),
+            {"entry_id": 1, "feature_id": 1, "feature_set_id": 2, "value_num": 999.0, "value_text": None},
+        ],
+        "ground_truth": [
+            {
+                "entry_id": i,
+                "actual_pace_delta_pct": None if i % 7 == 0 else i / 10,
+                "clean_laps": 20,
+                "is_valid_row": i % 7 != 0,
+            }
+            for i in rows
+        ],
+    }
+
+
+def test_read_wide_orders_columns_by_position_and_rows_by_race_and_driver():
+    wide = read_wide(FakeSupabase(wide_tables()))
+    assert len(wide) == 1200  # past the 1,000 rows of one request, and not the value of set v2
+    assert list(wide.columns) == [
+        *["entry_id", "year", "round", "circuit", "driver", "team"],
+        *["race_pace_delta_pct", "clean_laps", "is_valid_row", "kind", "x"],
+    ]
+    keys = list(zip(wide["year"], wide["round"], wide["driver"], strict=True))
+    assert keys == sorted(keys)
+    row = wide[wide["entry_id"] == 5].iloc[0]
+    assert (row["round"], row["driver"], row["kind"], row["x"], row["race_pace_delta_pct"]) == (
+        2,
+        "ZZZ",
+        "k2",
+        5.0,
+        0.5,
+    )
+    assert wide["x"].dtype == "float64" and wide["kind"].dtype == object  # not in features.yml: the dtype of the table
+    invalid = wide[~wide["is_valid_row"]]
+    assert invalid["race_pace_delta_pct"].isna().all() and len(invalid) == 171
+
+
+def test_read_wide_of_a_set_that_does_not_exist_or_has_no_values_points_to_load_features():
+    with pytest.raises(StoreError, match=r"feature set v9 does not exist.*load_features\.py"):
+        read_wide(FakeSupabase(wide_tables(10)), "v9")
+    with pytest.raises(StoreError, match=r"feature set v2 has no values.*load_features\.py"):
+        read_wide(FakeSupabase({**wide_tables(10), "feature_values": []}), "v2")
+
+
+def test_entries_with_features_but_no_ground_truth_are_reported():
+    tables = wide_tables(10)
+    tables["ground_truth"] = [g for g in tables["ground_truth"] if g["entry_id"] not in (3, 4)]
+    with pytest.raises(StoreError, match=r"2 entries have features but no ground_truth"):
+        read_wide(FakeSupabase(tables))

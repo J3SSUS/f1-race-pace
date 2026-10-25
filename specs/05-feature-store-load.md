@@ -78,9 +78,12 @@ class LoadResult:
 
 class StoreError(Exception): ...   # a missing race, circuit or entry, a feature set whose hash changed, or a race that failed
 
-def load_features(client, *, version: str = "v1", raw_dir: Path = RAW_DIR, first_year: int | None = None,
+def load_features(client, *, version: str | None = None, raw_dir: Path = RAW_DIR, first_year: int | None = None,
                   last_year: int | None = None, run_id: str | None = None, log: Callable[[str], None] | None = None) -> LoadResult
     # Rebuilds every race in races (ordered by year, round) and writes features and ground truth.
+    # version defaults to the version in config/features.yml.
+    # first_year only limits what is written: earlier races are still built, because the form features need them.
+    # last_year stops the walk after that season.
     # Stops at the first race that fails with a StoreError that names its year and round.
 
 def read_wide(client, version: str = "v1") -> pd.DataFrame

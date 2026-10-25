@@ -13,13 +13,15 @@ import pandas as pd
 
 from common.supabase_io import upsert_rows
 from features.build import build_race
-from features.catalog import Catalog, load_catalog
+from features.catalog import IDENTIFICATION, TARGET_COLUMNS, Catalog, load_catalog
 from features.form import HISTORY_COLUMNS, empty_history
 from features.race_info import RaceInfo
 from ingestion.session import RAW_DIR
 
 PAGE_SIZE = 1000  # PostgREST returns at most this many rows per request
 LOAD_REFERENCE = "run scripts/load_reference.py first"
+# dtype of a feature of a set that `config/features.yml` no longer lists: the safe reading of its `features.dtype`
+FALLBACK_DTYPES = {"float": "float64", "category": "object", "int": "Int64", "flag": "Int64"}
 
 
 class StoreError(Exception):
@@ -239,3 +241,64 @@ def load_features(
             if log:
                 log(f"{year} round {round}: {len(frame)} entries, {len(valid)} valid")
     return LoadResult(run_id, races, entries, feature_values, ground_truth, valid_rows)
+
+
+def read_wide(client, version: str = "v1") -> pd.DataFrame:
+    """The wide matrix of one feature set: one row per entry, sorted by `(year, round, driver)`.
+
+    Columns: `entry_id`, the identification columns, the three target columns (`race_pace_delta_pct` is
+    `ground_truth.actual_pace_delta_pct`) and the features in the order of `feature_set_items.position`, each with
+    the dtype of `config/features.yml` (the dtype of `features.dtype` for a feature the file no longer lists).
+    """
+    sets = [s for s in read_table(client, "feature_sets", "feature_set_id,version") if s["version"] == version]
+    if not sets:
+        raise StoreError(f"feature set {version} does not exist: run scripts/load_features.py first")
+    set_id = sets[0]["feature_set_id"]
+
+    items = [i for i in read_table(client, "feature_set_items") if i["feature_set_id"] == set_id]
+    by_id = {f["feature_id"]: f for f in read_table(client, "features", "feature_id,name,dtype")}
+    ordered = [by_id[i["feature_id"]] for i in sorted(items, key=lambda i: i["position"])]
+    rows = [
+        v
+        for v in read_table(client, "feature_values", "entry_id,feature_id,feature_set_id,value_num,value_text")
+        if v["feature_set_id"] == set_id
+    ]
+    if not rows:
+        raise StoreError(f"feature set {version} has no values: run scripts/load_features.py first")
+
+    values = pd.DataFrame(rows)
+    ids = [f["feature_id"] for f in ordered]
+    numbers = values.pivot(index="entry_id", columns="feature_id", values="value_num").reindex(columns=ids)
+    texts = values.pivot(index="entry_id", columns="feature_id", values="value_text").reindex(columns=ids)
+    wide = pd.DataFrame({f["name"]: (texts if f["dtype"] == "category" else numbers)[f["feature_id"]] for f in ordered})
+
+    entries = pd.DataFrame(read_table(client, "race_entries", "entry_id,race_id,driver_id,team_id"))
+    races = pd.DataFrame(read_table(client, "races", "race_id,year,round,circuit_id"))
+    circuits = pd.DataFrame(read_table(client, "circuits", "circuit_id,name")).rename(columns={"name": "circuit"})
+    drivers = pd.DataFrame(read_table(client, "drivers", "driver_id,code")).rename(columns={"code": "driver"})
+    teams = pd.DataFrame(read_table(client, "teams", "team_id,name")).rename(columns={"name": "team"})
+    truth = pd.DataFrame(
+        read_table(client, "ground_truth", "entry_id,actual_pace_delta_pct,clean_laps,is_valid_row")
+    ).rename(columns={"actual_pace_delta_pct": "race_pace_delta_pct"})
+
+    missing = sorted(set(wide.index) - set(truth["entry_id"]))
+    if missing:
+        raise StoreError(
+            f"{len(missing)} entries have features but no ground_truth: run scripts/load_features.py first"
+        )
+
+    frame = (
+        wide.reset_index()
+        .merge(entries, on="entry_id")
+        .merge(races, on="race_id")
+        .merge(circuits, on="circuit_id")
+        .merge(drivers, on="driver_id")
+        .merge(teams, on="team_id")
+        .merge(truth, on="entry_id")
+    )
+    columns = ["entry_id", *IDENTIFICATION, *TARGET_COLUMNS, *[f["name"] for f in ordered]]
+    catalog = {f.name: f.pandas_dtype for f in load_catalog().features}
+    dtypes = {f["name"]: catalog.get(f["name"], FALLBACK_DTYPES[f["dtype"]]) for f in ordered}
+    dtypes.update({"race_pace_delta_pct": "float64", "clean_laps": "int64", "is_valid_row": "bool"})
+    frame = frame[columns].astype(dtypes)
+    return frame.sort_values(["year", "round", "driver"], ignore_index=True)
