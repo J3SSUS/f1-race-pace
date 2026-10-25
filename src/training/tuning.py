@@ -1,6 +1,7 @@
 """Optuna tuning of the six models over the temporal CV of SPEC 07."""
 
 import tempfile
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -11,9 +12,10 @@ import optuna
 import pandas as pd
 from mlflow import MlflowClient
 
-from common.config import Choice, Fixed, ParamSpec, Range, TrainingConfig
+from common.config import Choice, Fixed, ParamSpec, Range, TrainingConfig, load_config
+from training.baseline import QUALIFYING
 from training.cv import CvResult, cross_validate
-from training.data import TrainSet
+from training.data import TrainSet, load_train
 from training.pipelines import ALGORITHMS, build_pipeline
 from training.runs import log_cv_metrics, log_train_params
 from training.sampling import resolve_tracking_uri
@@ -111,3 +113,50 @@ def tune_model(
                 mlflow.log_artifact(str(path))
         mlflow.sklearn.log_model(fitted, name="model", serialization_format="cloudpickle")
     return TuneResult(model, run.info.run_id, best, best_params, best_cv, trials)
+
+
+def tune_models(
+    run_id: str,
+    config: TrainingConfig | None = None,
+    client=None,
+    tracking_uri: str | None = None,
+    loader: Callable = load_train,
+    models: list[str] | None = None,
+    on_model: Callable[[str, str], None] | None = None,
+) -> dict[str, TuneResult]:
+    """`tune_model` for the enabled models of the config, in config order, under the sampling run `run_id`.
+
+    `models` keeps only the named ones; a name that is not an enabled model raises `ValueError` before anything is
+    loaded. Loads the training set once. `on_model(name, model_run_id)` is called as each model run closes.
+    """
+    config = config or load_config()
+    enabled = config.enabled_models()
+    if models is not None:
+        unknown = [m for m in models if m not in ALGORITHMS]
+        if unknown:
+            raise ValueError(f"unknown models {unknown}; allowed: {sorted(ALGORITHMS)}")
+        disabled = [m for m in models if m not in enabled]
+        if disabled:
+            raise ValueError(f"models {disabled} are disabled in the config; enabled: {list(enabled)}")
+        enabled = {name: specs for name, specs in enabled.items() if name in models}
+    train = loader(run_id, client, tracking_uri=tracking_uri)
+    results = {}
+    for name, specs in enabled.items():
+        results[name] = tune_model(name, specs, train, run_id, config, tracking_uri)
+        if on_model:
+            on_model(name, results[name].run_id)
+    return results
+
+
+def reference_mae(run_id: str, name: str = QUALIFYING, tracking_uri: str | None = None) -> float | None:
+    """`cv_mae_mean` of the latest finished run `name` under the sampling run `run_id`, or None if there is none."""
+    uri = resolve_tracking_uri(tracking_uri)
+    client = MlflowClient(uri)
+    runs = client.search_runs(
+        [client.get_run(run_id).info.experiment_id],
+        filter_string=f"tags.mlflow.parentRunId = '{run_id}' and attributes.run_name = '{name}' "
+        "and attributes.status = 'FINISHED'",
+        order_by=["attributes.start_time DESC"],
+        max_results=1,
+    )
+    return runs[0].data.metrics["cv_mae_mean"] if runs else None
