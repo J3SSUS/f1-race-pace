@@ -1,6 +1,6 @@
 # SPEC 06 — Sampling, split and adversarial validation
 
-> **Status:** Approved
+> **Status:** Implemented
 > **Depends on:** SPEC 01 (raw session ingestion), SPEC 02 (reference data), SPEC 05 (feature store load)
 > **Backlog:** Phase 3 of `docs/backlog.md` (the sampling step and the split); the adversarial validation moved here from Phase 2 (`DECISIONS.md`, 2026-10-19)
 > **Date:** 2026-10-25
@@ -171,29 +171,29 @@ Each step leaves `uv run pytest tests` green and can be committed on its own. Th
 
 ## Acceptance criteria
 
-- [ ] `uv run pytest tests` passes without network access, including the new tests of `src/training/` and of `scripts/sample.py` and `scripts/adversarial_validation.py`.
-- [ ] `uv run ruff check src scripts tests` and `uv run ruff format --check src scripts tests` report no problems.
-- [ ] `split_races` over 70 races with `test_fraction` 0.2 gives 56 train and 14 test, ordered by `(year, round)`, with every train race before every test race, and no race in both parts.
-- [ ] `select_races` leaves out an event not yet held, stops at the cutoff round when there is one (ignoring `last_year`) and at `last_year` when there is not.
-- [ ] A Q or R session that is `failed` or `invalid` makes `run_sampling` raise `SamplingError` that lists every race affected, before the split is made and before any MLflow run is opened. The Q rule of SPEC 02 applies (an invalid Q with valid `drivers` and `session_result` is accepted).
-- [ ] An FP2 or S session that is `failed` or `invalid` does not stop the step and appears in `session_issues` of the manifest.
-- [ ] S is ingested only for the races whose schedule has it, and `ensure_race_entries` is called once per race.
-- [ ] The digest of a race is the same for the same Parquets, changes when one byte of them changes and does not depend on `meta.json`; the digest of a part changes when a label or the order of the rows changes.
-- [ ] `data/splits/<run_id>/` holds `train.parquet`, `test.parquet` and `manifest.json`; the two Parquets have one row per race with only the columns `year`, `round`, `split`, `sessions` and `digest`; `git check-ignore data/splits/x` confirms the folder is ignored.
-- [ ] `manifest.json` has the fields of the data model, its race lists match the two Parquets, and it carries the `run_id` and the generation date.
-- [ ] After `run_sampling`, the parent run is in the experiment `f1-race-pace`, is named `sampling`, has the tag `step=sampling` and ends `FINISHED`; it has the params of the data model, the artifact `manifest.json` and two dataset inputs (`train` and `test`) whose digests equal those of the manifest.
-- [ ] An exception after the run is opened leaves it `FAILED`.
-- [ ] `read_split(run_id)` returns the same `year`, `round` and `split` that were registered, and an unknown `run_id` raises a clear error.
-- [ ] Two sampling runs over the same data give the same digests and different `run_id`.
-- [ ] `scripts/sample.py` prints one line per race, the counts and the `run_id`, and exits 0 when it finishes and 1 when `SamplingError` stops it.
-- [ ] `adversarial_auc` gives an AUC above 0.95 on a synthetic table where one feature separates train from test, and between 0.35 and 0.65 where nothing does.
-- [ ] The classifier receives exactly the 15 features of `config/features.yml` (12 in the variant without `driver_pace_last3`, `team_pace_last3` and `team_pace_this_circuit_prev`), and never `race_pace_delta_pct`, `clean_laps`, `is_valid_row`, `year`, `round`, `driver`, `team` or `circuit`.
-- [ ] In every fold of the adversarial validation no race is in both the training part and the validation part, and the same seed gives the same AUC.
-- [ ] `scripts/adversarial_validation.py <run_id>` prints both AUCs, logs `adversarial_auc_all`, `adversarial_auc_no_form` and `adversarial_validation.json` in the parent run, and changes nothing else in it.
-- [ ] After the real run, `scripts/sample.py` registers 70 races: 56 train, from 2023 round 1 to 2025 round 10 and equal to the train races listed in `docs/eda_summary.md`, and 14 test, from 2025 round 11 to round 24. The run is visible in MLflow with its two datasets and the manifest.
-- [ ] A second real run of `scripts/sample.py` gives the same digests as the first.
-- [ ] After the real run, `scripts/adversarial_validation.py` has logged the two AUCs in the parent run, and `run_id`, counts and AUCs are in `DECISIONS.md`.
-- [ ] `config/training.json`, `config/features.yml`, `supabase/migrations/` and `pyproject.toml` are unchanged (no new dependency), and the service key appears nowhere in the repo or in the output of the scripts.
+- [x] `uv run pytest tests` passes without network access, including the new tests of `src/training/` and of `scripts/sample.py` and `scripts/adversarial_validation.py`.
+- [x] `uv run ruff check src scripts tests` and `uv run ruff format --check src scripts tests` report no problems.
+- [x] `split_races` over 70 races with `test_fraction` 0.2 gives 56 train and 14 test, ordered by `(year, round)`, with every train race before every test race, and no race in both parts.
+- [x] `select_races` leaves out an event not yet held, stops at the cutoff round when there is one (ignoring `last_year`) and at `last_year` when there is not.
+- [x] A Q or R session that is `failed` or `invalid` makes `run_sampling` raise `SamplingError` that lists every race affected, before the split is made and before any MLflow run is opened. The Q rule of SPEC 02 applies (an invalid Q with valid `drivers` and `session_result` is accepted).
+- [x] An FP2 or S session that is `failed` or `invalid` does not stop the step and appears in `session_issues` of the manifest.
+- [x] S is ingested only for the races whose schedule has it, and `ensure_race_entries` is called once per race.
+- [x] The digest of a race is the same for the same Parquets, changes when one byte of them changes and does not depend on `meta.json`; the digest of a part changes when a label or the order of the rows changes.
+- [x] `data/splits/<run_id>/` holds `train.parquet`, `test.parquet` and `manifest.json`; the two Parquets have one row per race with only the columns `year`, `round`, `split`, `sessions` and `digest`; `git check-ignore data/splits/x` confirms the folder is ignored.
+- [x] `manifest.json` has the fields of the data model, its race lists match the two Parquets, and it carries the `run_id` and the generation date.
+- [x] After `run_sampling`, the parent run is in the experiment `f1-race-pace`, is named `sampling`, has the tag `step=sampling` and ends `FINISHED`; it has the params of the data model, the artifact `manifest.json` and two dataset inputs (`train` and `test`) whose digests equal those of the manifest.
+- [x] An exception after the run is opened leaves it `FAILED`.
+- [x] `read_split(run_id)` returns the same `year`, `round` and `split` that were registered, and an unknown `run_id` raises a clear error.
+- [x] Two sampling runs over the same data give the same digests and different `run_id`.
+- [x] `scripts/sample.py` prints one line per race, the counts and the `run_id`, and exits 0 when it finishes and 1 when `SamplingError` stops it.
+- [x] `adversarial_auc` gives an AUC above 0.95 on a synthetic table where one feature separates train from test, and between 0.35 and 0.65 where nothing does.
+- [x] The classifier receives exactly the 15 features of `config/features.yml` (12 in the variant without `driver_pace_last3`, `team_pace_last3` and `team_pace_this_circuit_prev`), and never `race_pace_delta_pct`, `clean_laps`, `is_valid_row`, `year`, `round`, `driver`, `team` or `circuit`.
+- [x] In every fold of the adversarial validation no race is in both the training part and the validation part, and the same seed gives the same AUC.
+- [x] `scripts/adversarial_validation.py <run_id>` prints both AUCs, logs `adversarial_auc_all`, `adversarial_auc_no_form` and `adversarial_validation.json` in the parent run, and changes nothing else in it.
+- [x] After the real run, `scripts/sample.py` registers 70 races: 56 train, from 2023 round 1 to 2025 round 10 and equal to the train races listed in `docs/eda_summary.md`, and 14 test, from 2025 round 11 to round 24. The run is visible in MLflow with its two datasets and the manifest.
+- [x] A second real run of `scripts/sample.py` gives the same digests as the first.
+- [x] After the real run, `scripts/adversarial_validation.py` has logged the two AUCs in the parent run, and `run_id`, counts and AUCs are in `DECISIONS.md`.
+- [x] `config/training.json`, `config/features.yml`, `supabase/migrations/` and `pyproject.toml` are unchanged (no new dependency), and the service key appears nowhere in the repo or in the output of the scripts.
 
 ---
 
