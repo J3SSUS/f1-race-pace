@@ -1,6 +1,7 @@
 # SPEC 08 — The six models with Optuna
 
 > **Status:** Approved
+> **Change (2026-10-29):** where this spec says the runs are children of the sampling run, they are now root runs tagged `sampling_run_id` (only the trial runs stay nested under their model run). See `DECISIONS.md`, "Run hierarchy changed".
 > **Depends on:** SPEC 05 (feature store load), SPEC 06 (sampling and split), SPEC 07 (metrics, CV and baseline)
 > **Backlog:** Phase 4 of `docs/backlog.md`: the six models, imputation as an Optuna hyperparameter, Optuna with temporal CV and the MLflow logging (the registered model, the `model_versions` and `metrics` rows and the `training` step are SPEC 09)
 > **Date:** 2026-10-25

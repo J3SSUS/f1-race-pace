@@ -1,6 +1,7 @@
 # SPEC 07 — Metrics, temporal CV and baseline
 
 > **Status:** Implemented
+> **Change (2026-10-29):** where this spec says the runs are children of the sampling run, they are now root runs tagged `sampling_run_id` (only the trial runs stay nested under their model run). See `DECISIONS.md`, "Run hierarchy changed".
 > **Depends on:** SPEC 05 (feature store load), SPEC 06 (sampling and split)
 > **Backlog:** Phase 4 of `docs/backlog.md`: data access, evaluation setup and the baseline (the six models with Optuna are SPEC 08; the model versions and the `training` step are SPEC 09)
 > **Date:** 2026-10-25

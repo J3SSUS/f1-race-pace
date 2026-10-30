@@ -116,9 +116,7 @@ def test_a_supabase_failure_keeps_the_mlflow_version_and_a_rerun_completes_the_r
 
 def run_with(uri, parent, tags=None, metrics=None, status="FINISHED"):
     client = MlflowClient(uri)
-    run = client.create_run(
-        client.get_run(parent).info.experiment_id, tags={"mlflow.parentRunId": parent, **(tags or {})}
-    )
+    run = client.create_run(client.get_run(parent).info.experiment_id, tags={"sampling_run_id": parent, **(tags or {})})
     for key, value in (metrics or {}).items():
         client.log_metric(run.info.run_id, key, value)
     client.set_terminated(run.info.run_id, status)

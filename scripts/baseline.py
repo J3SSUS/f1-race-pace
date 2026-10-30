@@ -1,7 +1,7 @@
 """Run the two references (the qualifying baseline and the median floor) against a sampling run.
 
 Reads the features from Supabase (`.env`) and the split from the MLflow run, cross-validates both inside train and
-registers each as a child run of the sampling run. Prints the run id of each child, one line per candidate with the
+registers each as a run tagged with the sampling run. Prints the run id of each, one line per candidate with the
 mean and standard deviation over the folds of every metric, and the gain of the baseline over the floor. Exits with
 code 1 and a `STOPPED:` line if it cannot (unknown run, missing feature set, too few races or no valid row).
 

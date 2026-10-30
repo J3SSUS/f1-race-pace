@@ -1,7 +1,7 @@
 """Tune the enabled models of `config/training.json` with Optuna against a sampling run.
 
 Reads the features from Supabase (`.env`) and the split from the MLflow run, runs one Optuna study per model over the
-temporal CV inside train and registers each model as a child run of the sampling run, with one child run per trial.
+temporal CV inside train and registers each model as a run tagged with the sampling run, with one child run per trial.
 Prints the run id of each model, then one line per model with its best cross-validated MAE (mean and standard
 deviation over the folds) and the gain over the `baseline` run of the same sampling run, read from MLflow. Without a
 `baseline` run it prints a note and no gain. Exits with code 1 and a `STOPPED:` line if it cannot (unknown run, missing

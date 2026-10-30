@@ -1,7 +1,7 @@
-"""The MLflow harness: one child run per candidate under the sampling run.
+"""The MLflow harness: one root run per candidate, tagged with the sampling run.
 
 Every model of SPEC 08 goes through `run_candidate`, so a candidate's runs always carry the same tags, params,
-metrics and artifacts, and its lineage is the sampling run that fixed its data.
+metrics and artifacts, and its lineage is the sampling run that fixed its data (tag `sampling_run_id`).
 """
 
 import tempfile
@@ -18,7 +18,7 @@ from training.baseline import ALGORITHMS, FLOOR, QUALIFYING, median_floor, quali
 from training.cv import CvResult, cross_validate
 from training.data import TrainSet, load_train
 from training.metrics import METRICS
-from training.sampling import resolve_tracking_uri
+from training.sampling import SAMPLING_TAG, resolve_tracking_uri
 
 
 def log_train_params(train: TrainSet, n_folds: int, extra: dict | None = None) -> None:
@@ -48,16 +48,16 @@ def run_candidate(
     algorithm: str,
     estimator,
     train: TrainSet,
-    parent_run_id: str,
+    sampling_run_id: str,
     n_folds: int,
     tracking_uri: str | None = None,
 ) -> str:
-    """Cross-validate `estimator`, fit it on all of train and log everything in a child run of `parent_run_id`.
+    """Cross-validate `estimator`, fit it on all of train and log everything in a run tagged with `sampling_run_id`.
 
-    Returns the child run id. If anything raises, the child run ends `FAILED` and the error propagates; the parent
-    run is never changed.
+    Returns the run id. If anything raises, the run ends `FAILED` and the error propagates; the sampling run is
+    never changed.
     """
-    return log_candidate(name, algorithm, estimator, train, parent_run_id, n_folds, tracking_uri)[0]
+    return log_candidate(name, algorithm, estimator, train, sampling_run_id, n_folds, tracking_uri)[0]
 
 
 def log_candidate(
@@ -65,16 +65,16 @@ def log_candidate(
     algorithm: str,
     estimator,
     train: TrainSet,
-    parent_run_id: str,
+    sampling_run_id: str,
     n_folds: int,
     tracking_uri: str | None = None,
 ) -> tuple[str, CvResult]:
     """`run_candidate`, also returning the `CvResult` it computed."""
     uri = resolve_tracking_uri(tracking_uri)
     mlflow.set_tracking_uri(uri)
-    experiment_id = MlflowClient(uri).get_run(parent_run_id).info.experiment_id
-    tags = {"step": "training", "algorithm": algorithm}
-    with mlflow.start_run(run_name=name, experiment_id=experiment_id, tags=tags, parent_run_id=parent_run_id) as run:
+    experiment_id = MlflowClient(uri).get_run(sampling_run_id).info.experiment_id
+    tags = {"step": "training", "algorithm": algorithm, SAMPLING_TAG: sampling_run_id}
+    with mlflow.start_run(run_name=name, experiment_id=experiment_id, tags=tags) as run:
         cv = cross_validate(estimator, train, n_folds)
         log_train_params(train, n_folds)
         log_cv_metrics(cv)
@@ -94,9 +94,9 @@ def run_references(
     loader: Callable = load_train,
     on_run: Callable[[str, str], None] | None = None,
 ) -> dict[str, CvResult]:
-    """The qualifying baseline and then the floor, as child runs of the sampling run `run_id`.
+    """The qualifying baseline and then the floor, as root runs tagged with the sampling run `run_id`.
 
-    Loads the training set once. `on_run(name, child_run_id)` is called as each child run closes. Returns the
+    Loads the training set once. `on_run(name, child_run_id)` is called as each run closes. Returns the
     cross-validation of each reference by name.
     """
     config = config or load_config()

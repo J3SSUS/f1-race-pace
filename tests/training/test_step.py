@@ -41,7 +41,7 @@ def child_runs(uri, parent, name):
     client = MlflowClient(uri)
     return client.search_runs(
         [client.get_run(parent).info.experiment_id],
-        filter_string=f"tags.mlflow.parentRunId = '{parent}' and attributes.run_name = '{name}'",
+        filter_string=f"tags.sampling_run_id = '{parent}' and attributes.run_name = '{name}'",
     )
 
 

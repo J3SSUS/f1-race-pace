@@ -33,6 +33,7 @@ from training.split import select_races, split_races
 # weekend has them (a sprint weekend has no FP2); Q and R are always needed.
 EXPERIMENT = "f1-race-pace"
 RUN_NAME = "sampling"
+SAMPLING_TAG = "sampling_run_id"  # on every baseline, floor and model run: the sampling run that fixed its data
 PROJECT_DIR = Path(__file__).resolve().parents[2]
 SPLIT_DIR = PROJECT_DIR / "data" / "splits"
 SPLIT_RULE = "chronological by race; the first floor((1 - test_fraction) * n) races are train"

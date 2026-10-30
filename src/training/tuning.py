@@ -18,7 +18,7 @@ from training.cv import CvResult, cross_validate
 from training.data import TrainSet, load_train
 from training.pipelines import ALGORITHMS, build_pipeline
 from training.runs import log_cv_metrics, log_train_params
-from training.sampling import resolve_tracking_uri
+from training.sampling import SAMPLING_TAG, resolve_tracking_uri
 
 IMPUTATION = "imputation"  # the one hyperparameter every model shares
 
@@ -54,23 +54,23 @@ def tune_model(
     model: str,
     specs: dict[str, ParamSpec],
     train: TrainSet,
-    parent_run_id: str,
+    sampling_run_id: str,
     config: TrainingConfig,
     tracking_uri: str | None = None,
 ) -> TuneResult:
-    """One Optuna study for `model`: a run for the model under `parent_run_id` and a child run per trial.
+    """One Optuna study for `model`: a root run for the model, tagged with `sampling_run_id`, and a child run per trial.
 
     The objective is the mean MAE of `cross_validate`. The best trial is refit on all of train and logged in the model
     run with its OOF predictions and the trials table. If a trial raises, that trial and the model run end `FAILED`
-    and the error propagates; the parent run is never changed.
+    and the error propagates; the sampling run is never changed.
     """
     uri = resolve_tracking_uri(tracking_uri)
     mlflow.set_tracking_uri(uri)
-    experiment_id = MlflowClient(uri).get_run(parent_run_id).info.experiment_id
+    experiment_id = MlflowClient(uri).get_run(sampling_run_id).info.experiment_id
     algorithm = ALGORITHMS[model]
     n_folds, seed, n_trials = config.cv.folds, config.optuna.seed, config.optuna.trials
-    tags = {"step": "training", "algorithm": algorithm}
-    with mlflow.start_run(run_name=model, experiment_id=experiment_id, tags=tags, parent_run_id=parent_run_id) as run:
+    tags = {"step": "training", "algorithm": algorithm, SAMPLING_TAG: sampling_run_id}
+    with mlflow.start_run(run_name=model, experiment_id=experiment_id, tags=tags) as run:
         rows: list[dict[str, Any]] = []
         results: dict[int, CvResult] = {}
         all_params: dict[int, dict[str, Any]] = {}
@@ -141,7 +141,7 @@ def tune_models(
     models: list[str] | None = None,
     on_model: Callable[[str, str], None] | None = None,
 ) -> dict[str, TuneResult]:
-    """`tune_model` for the enabled models of the config, in config order, under the sampling run `run_id`.
+    """`tune_model` for the enabled models of the config, in config order, tagged with the sampling run `run_id`.
 
     `models` keeps only the named ones; a name that is not an enabled model raises `ValueError` before anything is
     loaded. Loads the training set once. `on_model(name, model_run_id)` is called as each model run closes.
@@ -158,12 +158,12 @@ def tune_models(
 
 
 def reference_mae(run_id: str, name: str = QUALIFYING, tracking_uri: str | None = None) -> float | None:
-    """`cv_mae_mean` of the latest finished run `name` under the sampling run `run_id`, or None if there is none."""
+    """`cv_mae_mean` of the latest finished run `name` tagged with the sampling run `run_id`, or None."""
     uri = resolve_tracking_uri(tracking_uri)
     client = MlflowClient(uri)
     runs = client.search_runs(
         [client.get_run(run_id).info.experiment_id],
-        filter_string=f"tags.mlflow.parentRunId = '{run_id}' and attributes.run_name = '{name}' "
+        filter_string=f"tags.{SAMPLING_TAG} = '{run_id}' and attributes.run_name = '{name}' "
         "and attributes.status = 'FINISHED'",
         order_by=["attributes.start_time DESC"],
         max_results=1,

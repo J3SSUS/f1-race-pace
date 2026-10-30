@@ -14,16 +14,16 @@ from training.baseline import QUALIFYING
 from training.data import load_train
 from training.registry import Version, feature_set_id_of, last_train_race_id, register_version
 from training.runs import run_references
-from training.sampling import read_split, resolve_tracking_uri
+from training.sampling import SAMPLING_TAG, read_split, resolve_tracking_uri
 from training.tuning import select_models, tune_models
 
 
 def finished_run_id(run_id: str, name: str, tracking_uri: str | None = None) -> str | None:
-    """The latest finished child run `name` of the sampling run `run_id`, or None if there is none."""
+    """The latest finished run `name` tagged with the sampling run `run_id`, or None if there is none."""
     client = MlflowClient(resolve_tracking_uri(tracking_uri))
     runs = client.search_runs(
         [client.get_run(run_id).info.experiment_id],
-        filter_string=f"tags.mlflow.parentRunId = '{run_id}' and attributes.run_name = '{name}' "
+        filter_string=f"tags.{SAMPLING_TAG} = '{run_id}' and attributes.run_name = '{name}' "
         "and attributes.status = 'FINISHED'",
         order_by=["attributes.start_time DESC"],
         max_results=1,

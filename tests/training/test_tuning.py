@@ -145,7 +145,7 @@ def trial_runs(client: MlflowClient, result):
     )
 
 
-def test_model_run_is_named_tagged_and_linked_to_the_sampling_run(uri, parent):
+def test_model_run_is_a_root_run_named_tagged_and_linked_to_the_sampling_run_by_tag(uri, parent):
     result = tune(uri, parent)
     client = MlflowClient(uri)
     run = client.get_run(result.run_id)
@@ -153,7 +153,8 @@ def test_model_run_is_named_tagged_and_linked_to_the_sampling_run(uri, parent):
     assert run.info.run_name == "ridge"
     assert run.data.tags["step"] == "training"
     assert run.data.tags["algorithm"] == "ridge"
-    assert run.data.tags["mlflow.parentRunId"] == parent
+    assert run.data.tags["sampling_run_id"] == parent
+    assert "mlflow.parentRunId" not in run.data.tags
     assert client.get_experiment(run.info.experiment_id).name == EXPERIMENT
 
 

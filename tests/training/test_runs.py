@@ -34,7 +34,7 @@ def snapshot(client: MlflowClient, run_id: str) -> dict:
     }
 
 
-def test_child_run_is_named_tagged_and_linked_to_the_parent(uri, parent):
+def test_run_is_a_root_run_named_tagged_and_linked_to_the_sampling_run_by_tag(uri, parent):
     child = run_candidate("baseline", "baseline", qualifying_baseline(), synthetic(), parent, 5, uri)
     client = MlflowClient(uri)
     run = client.get_run(child)
@@ -42,7 +42,8 @@ def test_child_run_is_named_tagged_and_linked_to_the_parent(uri, parent):
     assert run.info.run_name == "baseline"
     assert run.data.tags["step"] == "training"
     assert run.data.tags["algorithm"] == "baseline"
-    assert run.data.tags["mlflow.parentRunId"] == parent
+    assert run.data.tags["sampling_run_id"] == parent
+    assert "mlflow.parentRunId" not in run.data.tags
     assert client.get_experiment(run.info.experiment_id).name == EXPERIMENT
 
 
@@ -95,7 +96,7 @@ def test_an_exception_leaves_the_child_failed_and_the_parent_untouched(uri, pare
     with pytest.raises(RuntimeError, match="boom"):
         run_candidate("broken", "dummy", Broken(), synthetic(), parent, 5, uri)
     children = client.search_runs(
-        [client.get_run(parent).info.experiment_id], filter_string=f"tags.`mlflow.parentRunId` = '{parent}'"
+        [client.get_run(parent).info.experiment_id], filter_string=f"tags.sampling_run_id = '{parent}'"
     )
     assert [c.info.status for c in children] == ["FAILED"]
     assert snapshot(client, parent) == before

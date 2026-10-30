@@ -13,7 +13,7 @@ from common.supabase_io import upsert_rows
 from features.catalog import load_catalog
 from features.store import StoreError, read_table
 from training.pipelines import ALGORITHMS
-from training.sampling import read_split, resolve_tracking_uri
+from training.sampling import SAMPLING_TAG, read_split, resolve_tracking_uri
 
 REGISTERED_MODEL = "f1-race-pace"
 METRIC_NAMES = {"mae": "mae", "rmse": "rmse", "r2": "r2", "pairwise_accuracy": "pairwise_acc"}
@@ -90,7 +90,7 @@ def register_in_mlflow(mlflow_run_id: str, tracking_uri: str | None = None) -> s
 
     The existing version is found by its tag `mlflow_run_id` (not the `run_id` attribute, which MLflow 3 may leave
     empty), so registering the same run twice returns the same version. The version is tagged `algorithm`,
-    `mlflow_run_id` and `sampling_run_id` (the parent run). No alias is set: training never promotes. Raises
+    `mlflow_run_id` and `sampling_run_id` (read from the run's tag). No alias is set: training never promotes. Raises
     `ValueError` for an unknown run, a run that did not finish, or a run without a `model`.
     """
     client = MlflowClient(resolve_tracking_uri(tracking_uri))
@@ -108,7 +108,7 @@ def register_in_mlflow(mlflow_run_id: str, tracking_uri: str | None = None) -> s
     tags = {
         "algorithm": run.data.tags.get("algorithm", ""),
         "mlflow_run_id": mlflow_run_id,
-        "sampling_run_id": run.data.tags.get("mlflow.parentRunId", ""),
+        "sampling_run_id": run.data.tags.get(SAMPLING_TAG, ""),
     }
     try:
         client.get_registered_model(REGISTERED_MODEL)
@@ -145,9 +145,9 @@ def register_version(name: str, mlflow_run_id: str, client, tracking_uri: str | 
     if missing:
         raise ValueError(f"MLflow run '{mlflow_run_id}' has no cv_{missing[0]}_mean metric")
     cv_means = {m: run.data.metrics[f"cv_{m}_mean"] for m in METRIC_NAMES}
-    sampling_run_id = run.data.tags.get("mlflow.parentRunId", "")
+    sampling_run_id = run.data.tags.get(SAMPLING_TAG, "")
     if not sampling_run_id:
-        raise ValueError(f"MLflow run '{mlflow_run_id}' has no sampling run as parent")
+        raise ValueError(f"MLflow run '{mlflow_run_id}' has no sampling_run_id tag")
 
     feature_set_id = feature_set_id_of(client, load_catalog().version)
     race_id = last_train_race_id(client, read_split(sampling_run_id, tracking_uri))
