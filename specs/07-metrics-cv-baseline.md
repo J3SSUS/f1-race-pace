@@ -1,6 +1,6 @@
 # SPEC 07 — Metrics, temporal CV and baseline
 
-> **Status:** Approved
+> **Status:** Implemented
 > **Depends on:** SPEC 05 (feature store load), SPEC 06 (sampling and split)
 > **Backlog:** Phase 4 of `docs/backlog.md`: data access, evaluation setup and the baseline (the six models with Optuna are SPEC 08; the model versions and the `training` step are SPEC 09)
 > **Date:** 2026-10-25
@@ -161,21 +161,21 @@ Each step leaves `uv run pytest tests` green and can be committed on its own. Th
 
 ## Acceptance criteria
 
-- [ ] `uv run pytest tests` passes without network access, including the new tests of `src/training/` (data, metrics, cv, baseline, runs) and of `scripts/baseline.py`.
-- [ ] `uv run ruff check src scripts tests` and `uv run ruff format --check src scripts tests` report no problems.
-- [ ] `score` returns MAE, RMSE, R², mean error and pairwise accuracy equal to the values derived by hand on a synthetic table; a perfect predictor gives MAE 0 and pairwise accuracy 1.0, a reversed order gives 0.0, and a constant prediction gives exactly 0.5.
-- [ ] Pairwise accuracy is computed inside each race: pairs with the same actual value are left out, a tie between two predictions counts 0.5, and the result is the mean over races.
-- [ ] `temporal_folds` over 56 races and 5 folds gives blocks of 10, 10, 9, 9, 9 and 9 races; fold 1 trains on 10 races and fold 5 on 47; in every fold all training races come before all validation races; the 5 validation blocks do not overlap and are the last 5 blocks; fewer than `n_folds + 1` races raises `ValueError`.
-- [ ] `cross_validate` clones the estimator (the one passed in is not fitted), no race is on both sides of a fold, `oof` has exactly one row per validation row and none from the first block, and the mean and standard deviation of the folds match a hand computation.
-- [ ] `load_train` returns only entries of train races with `is_valid_row = True`; `X` has the 15 features of `config/features.yml` in order and with their dtypes; `y` has no NaN; no test race and no invalid row reaches the `TrainSet`; an unknown `run_id` raises a clear error.
-- [ ] The qualifying baseline uses only `quali_delta_pct` and recovers the line of a synthetic table; the floor predicts the median of the fold-train target and scores a pairwise accuracy of exactly 0.5.
-- [ ] After `run_candidate`, the child run exists under the sampling run, ends `FINISHED`, carries the tags `step=training`, `algorithm` and `mlflow.parentRunId`, has the params, `cv_<metric>_mean` and `_std` for the 5 metrics, `fold_<metric>` with 5 steps, and the artifacts `model/` and `oof_predictions.parquet`; the logged model predicts the same as the fitted one.
-- [ ] An exception inside `run_candidate` leaves the child run `FAILED`; the parent run keeps its status, params, datasets and manifest unchanged.
-- [ ] `scripts/baseline.py <run_id>` prints one line per candidate with the mean and standard deviation of each metric and the gain of the baseline over the floor, and exits 0; it exits 1 with a `STOPPED:` line for an unknown run, a missing feature set or too few races.
-- [ ] No test race is read, scored or predicted anywhere in the code of this spec (`load_train` filters them out before building the `TrainSet`).
-- [ ] After the real run, `scripts/baseline.py` registers two child runs, `baseline` and `floor`, under the sampling run; both visible in MLflow with their metrics and artifacts; the baseline's cross-validated MAE is below the floor's, and both are within the range of the EDA (floor near 0.727, qualifying line near 0.523) or the gap is explained in `DECISIONS.md`.
-- [ ] After the real run, the `run_id`, the two child run ids and the metrics are in `DECISIONS.md`.
-- [ ] `config/training.json`, `config/features.yml`, `supabase/migrations/` and `pyproject.toml` are unchanged (no new dependency), nothing is written to Supabase, and the service key appears nowhere in the repo or in the output of the script.
+- [x] `uv run pytest tests` passes without network access, including the new tests of `src/training/` (data, metrics, cv, baseline, runs) and of `scripts/baseline.py`.
+- [x] `uv run ruff check src scripts tests` and `uv run ruff format --check src scripts tests` report no problems.
+- [x] `score` returns MAE, RMSE, R², mean error and pairwise accuracy equal to the values derived by hand on a synthetic table; a perfect predictor gives MAE 0 and pairwise accuracy 1.0, a reversed order gives 0.0, and a constant prediction gives exactly 0.5.
+- [x] Pairwise accuracy is computed inside each race: pairs with the same actual value are left out, a tie between two predictions counts 0.5, and the result is the mean over races.
+- [x] `temporal_folds` over 56 races and 5 folds gives blocks of 10, 10, 9, 9, 9 and 9 races; fold 1 trains on 10 races and fold 5 on 47; in every fold all training races come before all validation races; the 5 validation blocks do not overlap and are the last 5 blocks; fewer than `n_folds + 1` races raises `ValueError`.
+- [x] `cross_validate` clones the estimator (the one passed in is not fitted), no race is on both sides of a fold, `oof` has exactly one row per validation row and none from the first block, and the mean and standard deviation of the folds match a hand computation.
+- [x] `load_train` returns only entries of train races with `is_valid_row = True`; `X` has the 15 features of `config/features.yml` in order and with their dtypes; `y` has no NaN; no test race and no invalid row reaches the `TrainSet`; an unknown `run_id` raises a clear error.
+- [x] The qualifying baseline uses only `quali_delta_pct` and recovers the line of a synthetic table; the floor predicts the median of the fold-train target and scores a pairwise accuracy of exactly 0.5.
+- [x] After `run_candidate`, the child run exists under the sampling run, ends `FINISHED`, carries the tags `step=training`, `algorithm` and `mlflow.parentRunId`, has the params, `cv_<metric>_mean` and `_std` for the 5 metrics, `fold_<metric>` with 5 steps, and the artifacts `model/` and `oof_predictions.parquet`; the logged model predicts the same as the fitted one.
+- [x] An exception inside `run_candidate` leaves the child run `FAILED`; the parent run keeps its status, params, datasets and manifest unchanged.
+- [x] `scripts/baseline.py <run_id>` prints one line per candidate with the mean and standard deviation of each metric and the gain of the baseline over the floor, and exits 0; it exits 1 with a `STOPPED:` line for an unknown run, a missing feature set or too few races.
+- [x] No test race is read, scored or predicted anywhere in the code of this spec (`load_train` filters them out before building the `TrainSet`).
+- [x] After the real run, `scripts/baseline.py` registers two child runs, `baseline` and `floor`, under the sampling run; both visible in MLflow with their metrics and artifacts; the baseline's cross-validated MAE is below the floor's, and both are within the range of the EDA (floor near 0.727, qualifying line near 0.523) or the gap is explained in `DECISIONS.md`.
+- [x] After the real run, the `run_id`, the two child run ids and the metrics are in `DECISIONS.md`.
+- [x] `config/training.json`, `config/features.yml`, `supabase/migrations/` and `pyproject.toml` are unchanged (no new dependency), nothing is written to Supabase, and the service key appears nowhere in the repo or in the output of the script.
 
 ---
 
