@@ -58,7 +58,8 @@
         "min_samples_leaf": [
           1,
           10
-        ]
+        ],
+        "criterion": "absolute_error"
       }
     },
     "xgboost": {
@@ -80,7 +81,8 @@
         "subsample": [
           0.6,
           1.0
-        ]
+        ],
+        "objective": "reg:absoluteerror"
       }
     },
     "lightgbm": {
@@ -102,7 +104,8 @@
         "min_child_samples": [
           5,
           40
-        ]
+        ],
+        "objective": "l1"
       }
     },
     "catboost": {
@@ -121,7 +124,8 @@
           0.3,
           "log"
         ],
-        "verbose": 0
+        "verbose": 0,
+        "loss_function": "MAE"
       }
     }
   }

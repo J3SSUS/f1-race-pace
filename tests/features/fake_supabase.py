@@ -15,6 +15,7 @@ IDENTITY = {
     "race_entries": "entry_id",
     "features": "feature_id",
     "feature_sets": "feature_set_id",
+    "model_versions": "model_version_id",
 }
 
 
