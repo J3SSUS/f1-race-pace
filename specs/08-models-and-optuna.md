@@ -1,6 +1,6 @@
 # SPEC 08 — The six models with Optuna
 
-> **Status:** Approved
+> **Status:** Implemented
 > **Change (2026-10-29):** where this spec says the runs are children of the sampling run, they are now root runs tagged `sampling_run_id` (only the trial runs stay nested under their model run). See `DECISIONS.md`, "Run hierarchy changed".
 > **Depends on:** SPEC 05 (feature store load), SPEC 06 (sampling and split), SPEC 07 (metrics, CV and baseline)
 > **Backlog:** Phase 4 of `docs/backlog.md`: the six models, imputation as an Optuna hyperparameter, Optuna with temporal CV and the MLflow logging (the registered model, the `model_versions` and `metrics` rows and the `training` step are SPEC 09)
@@ -152,21 +152,21 @@ Each step leaves `uv run pytest tests` green and can be committed on its own. Th
 
 ## Acceptance criteria
 
-- [ ] `uv run pytest tests` passes without network access, including the new tests of `src/training/pipelines.py`, `src/training/tuning.py`, the extended config and `scripts/tune.py`, and the tests of SPEC 07 unchanged.
-- [ ] `uv run ruff check src scripts tests` and `uv run ruff format --check src scripts tests` report no problems.
-- [ ] `config/training.json` loads with `load_config()`, and `enabled_models()` returns the fixed losses: `Fixed("absolute_error")` for Random Forest, `Fixed("reg:absoluteerror")` for XGBoost, `Fixed("l1")` for LightGBM and `Fixed("MAE")` for CatBoost. Ridge and ElasticNet have no loss param. A param outside the allowed set is still rejected.
-- [ ] `build_pipeline` fits and predicts for the six models on a table with NaN; the imputer uses the strategy it is given; only Ridge and ElasticNet scale; a column that is all NaN in the train part is kept; an unseen `circuit_type` does not fail; the loss params reach each estimator; the same seed gives the same predictions; CatBoost writes no `catboost_info` folder.
-- [ ] `suggest` gives integers for integer ranges and floats for float ranges, honours `log`, keeps every value inside its range, makes no suggestion for fixed values, always suggests `imputation`, and repeats the same sequence with the same seed.
-- [ ] After `tune_model` with `n` trials, the model run exists under the sampling run, ends `FINISHED`, and carries the tags `step=training`, `algorithm` (as in `ALGORITHMS`) and `mlflow.parentRunId`, the best trial's params and `imputation`, `n_trials`, `seed`, `cv_<metric>_mean` and `_std` for the 5 metrics, `best_trial`, and the artifacts `model/`, `oof_predictions.parquet` and `trials.parquet`.
-- [ ] Under the model run there are exactly `n` trial runs, each with the tags `step=tuning`, `algorithm`, `trial` and `mlflow.parentRunId` (the model run), its params and `imputation`, `fold_<metric>` with 5 steps and `cv_<metric>_mean` and `_std`, and no model artifact.
-- [ ] The best trial is the one with the lowest cross-validated MAE; the refit model on all of train predicts the same as the one logged; the same seed repeats the same trials and the same best params.
-- [ ] A trial that raises leaves that trial and the model run `FAILED` and the error propagates; the sampling run keeps its status, params, datasets and manifest unchanged.
-- [ ] The `baseline` and `floor` runs of SPEC 07 log exactly what they logged before the refactor of the shared logging.
-- [ ] `scripts/tune.py <run_id>` runs the enabled models of the config in order, skips the disabled ones, honours `--models`, prints the run id of each model, one line per model with its best MAE (mean ± standard deviation) and the gain over the `baseline` run, and exits 0. Without a `baseline` run it prints a note instead of the gain. It exits 1 with a `STOPPED:` line for an unknown run, a missing feature set, too few races or an unknown model name.
-- [ ] No test race is read, scored or predicted anywhere in the code of this spec (the models are tuned on the `TrainSet` of `load_train`).
-- [ ] After the real run, `scripts/tune.py` registers six model runs under the sampling run, each with 50 trial runs, all visible in MLflow with their metrics, and the `model/` artifact on the model runs. Each model's best cross-validated MAE is recorded and compared with the baseline's; a model that does not beat the baseline is reported as such, not hidden.
-- [ ] After the real run, the sampling `run_id`, the six model run ids, the best MAE of each model and the total time are in `DECISIONS.md`.
-- [ ] `config/features.yml`, `supabase/migrations/` and `pyproject.toml` are unchanged (no new dependency), nothing is written to Supabase, and the service key appears nowhere in the repo or in the output of the script.
+- [x] `uv run pytest tests` passes without network access, including the new tests of `src/training/pipelines.py`, `src/training/tuning.py`, the extended config and `scripts/tune.py`, and the tests of SPEC 07 unchanged.
+- [x] `uv run ruff check src scripts tests` and `uv run ruff format --check src scripts tests` report no problems.
+- [x] `config/training.json` loads with `load_config()`, and `enabled_models()` returns the fixed losses: `Fixed("absolute_error")` for Random Forest, `Fixed("reg:absoluteerror")` for XGBoost, `Fixed("l1")` for LightGBM and `Fixed("MAE")` for CatBoost. Ridge and ElasticNet have no loss param. A param outside the allowed set is still rejected.
+- [x] `build_pipeline` fits and predicts for the six models on a table with NaN; the imputer uses the strategy it is given; only Ridge and ElasticNet scale; a column that is all NaN in the train part is kept; an unseen `circuit_type` does not fail; the loss params reach each estimator; the same seed gives the same predictions; CatBoost writes no `catboost_info` folder.
+- [x] `suggest` gives integers for integer ranges and floats for float ranges, honours `log`, keeps every value inside its range, makes no suggestion for fixed values, always suggests `imputation`, and repeats the same sequence with the same seed.
+- [x] After `tune_model` with `n` trials, the model run exists under the sampling run, ends `FINISHED`, and carries the tags `step=training`, `algorithm` (as in `ALGORITHMS`) and `mlflow.parentRunId`, the best trial's params and `imputation`, `n_trials`, `seed`, `cv_<metric>_mean` and `_std` for the 5 metrics, `best_trial`, and the artifacts `model/`, `oof_predictions.parquet` and `trials.parquet`.
+- [x] Under the model run there are exactly `n` trial runs, each with the tags `step=tuning`, `algorithm`, `trial` and `mlflow.parentRunId` (the model run), its params and `imputation`, `fold_<metric>` with 5 steps and `cv_<metric>_mean` and `_std`, and no model artifact.
+- [x] The best trial is the one with the lowest cross-validated MAE; the refit model on all of train predicts the same as the one logged; the same seed repeats the same trials and the same best params.
+- [x] A trial that raises leaves that trial and the model run `FAILED` and the error propagates; the sampling run keeps its status, params, datasets and manifest unchanged.
+- [x] The `baseline` and `floor` runs of SPEC 07 log exactly what they logged before the refactor of the shared logging.
+- [x] `scripts/tune.py <run_id>` runs the enabled models of the config in order, skips the disabled ones, honours `--models`, prints the run id of each model, one line per model with its best MAE (mean ± standard deviation) and the gain over the `baseline` run, and exits 0. Without a `baseline` run it prints a note instead of the gain. It exits 1 with a `STOPPED:` line for an unknown run, a missing feature set, too few races or an unknown model name.
+- [x] No test race is read, scored or predicted anywhere in the code of this spec (the models are tuned on the `TrainSet` of `load_train`).
+- [x] After the real run, `scripts/tune.py` registers six model runs under the sampling run, each with 50 trial runs, all visible in MLflow with their metrics, and the `model/` artifact on the model runs. Each model's best cross-validated MAE is recorded and compared with the baseline's; a model that does not beat the baseline is reported as such, not hidden.
+- [x] After the real run, the sampling `run_id`, the six model run ids, the best MAE of each model and the total time are in `DECISIONS.md`.
+- [x] `config/features.yml`, `supabase/migrations/` and `pyproject.toml` are unchanged (no new dependency), nothing is written to Supabase, and the service key appears nowhere in the repo or in the output of the script.
 
 ---
 

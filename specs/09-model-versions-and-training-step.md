@@ -1,6 +1,6 @@
 # SPEC 09 — Model versions and the `training` step
 
-> **Status:** Approved
+> **Status:** Implemented
 > **Depends on:** SPEC 05 (feature store load), SPEC 06 (sampling and split), SPEC 07 (metrics, CV and baseline), SPEC 08 (the six models with Optuna)
 > **Backlog:** Phase 4 of `docs/backlog.md`: "Register versions" (one `model_versions` row per run and one version of the registered model `f1-race-pace`, baseline included, with the results in `metrics`); the `training` step and `scripts/train.py` that SPEC 08 left for this spec
 > **Date:** 2026-10-25
@@ -143,19 +143,19 @@ Each step leaves `uv run pytest tests` green and can be committed on its own. Th
 
 ## Acceptance criteria
 
-- [ ] `uv run pytest tests` passes without network access, including the new tests of `src/training/registry.py`, `src/training/step.py` and `scripts/train.py`, and the tests of SPEC 07 and SPEC 08 unchanged.
-- [ ] `uv run ruff check src scripts tests` and `uv run ruff format --check src scripts tests` report no problems.
-- [ ] `model_version_row` gives `mlflow_run_id`, `algorithm`, `feature_set_id`, `trained_through_race_id` and `is_shadow = false`; `feature_set_id` is the one of the catalog's version and `trained_through_race_id` is the last train race of the split, whatever the order of its rows. A missing feature set or race raises with a clear message.
-- [ ] `metric_rows` gives exactly 4 rows per version: `mae`, `rmse`, `r2` and `pairwise_acc`, all with `split = 'train'`, `segment_type = 'overall'` and `race_id` and `segment_value` empty. `mean_error` is not written, and each value equals the `cv_<m>_mean` of the run.
-- [ ] Registering a run in MLflow creates `f1-race-pace` on first use and a version from `runs:/<run_id>/model` with the tags `algorithm`, `mlflow_run_id` and `sampling_run_id`. Registering the same run again returns the same version and creates none; another run gets the next version. No alias is set.
-- [ ] `register_version` reads `algorithm` and the CV means from the run: the rows written equal the run's tag and metrics. Registering the same run twice leaves one `model_versions` row, 4 `metrics` rows and one MLflow version.
-- [ ] If Supabase raises, the MLflow version stays and a rerun completes the rows without a second version. A `FAILED` run, an unknown algorithm or a run with no `cv_mae_mean` raises before anything is written.
-- [ ] `run_training` runs the references only when the sampling run has no finished `baseline` run, registers the baseline first and then each model as its run closes, honours `models`, keeps the config order and returns the versions by name. A model that raises leaves the versions already registered in place and the error propagates.
-- [ ] Nothing is written to `champion_history`, `predictions`, the `champion` alias or any `test` or `walk_forward` metric, and no test race is read, scored or predicted anywhere in the code of this spec.
-- [ ] `scripts/train.py <run_id>` prints the run id and the version of each model, one line per model with its best MAE (mean ± standard deviation) and the gain over the baseline, and exits 0. It exits 1 with a `STOPPED:` line for an unknown run, a missing feature set, too few races, an unknown model name or a Supabase error.
-- [ ] `config/features.yml`, `supabase/migrations/` and `pyproject.toml` are unchanged, and the service key appears nowhere in the repo or in the output of the script.
-- [ ] After the real run, Supabase has 7 `model_versions` rows (the baseline and the six models) and 28 `metrics` rows with `split = 'train'`, MLflow has 7 versions of `f1-race-pace` and no `champion` alias, and `champion_history` is empty.
-- [ ] After the real run, the sampling `run_id`, the seven version ids and the total time are in `DECISIONS.md`.
+- [x] `uv run pytest tests` passes without network access, including the new tests of `src/training/registry.py`, `src/training/step.py` and `scripts/train.py`, and the tests of SPEC 07 and SPEC 08 unchanged.
+- [x] `uv run ruff check src scripts tests` and `uv run ruff format --check src scripts tests` report no problems.
+- [x] `model_version_row` gives `mlflow_run_id`, `algorithm`, `feature_set_id`, `trained_through_race_id` and `is_shadow = false`; `feature_set_id` is the one of the catalog's version and `trained_through_race_id` is the last train race of the split, whatever the order of its rows. A missing feature set or race raises with a clear message.
+- [x] `metric_rows` gives exactly 4 rows per version: `mae`, `rmse`, `r2` and `pairwise_acc`, all with `split = 'train'`, `segment_type = 'overall'` and `race_id` and `segment_value` empty. `mean_error` is not written, and each value equals the `cv_<m>_mean` of the run.
+- [x] Registering a run in MLflow creates `f1-race-pace` on first use and a version from `runs:/<run_id>/model` with the tags `algorithm`, `mlflow_run_id` and `sampling_run_id`. Registering the same run again returns the same version and creates none; another run gets the next version. No alias is set.
+- [x] `register_version` reads `algorithm` and the CV means from the run: the rows written equal the run's tag and metrics. Registering the same run twice leaves one `model_versions` row, 4 `metrics` rows and one MLflow version.
+- [x] If Supabase raises, the MLflow version stays and a rerun completes the rows without a second version. A `FAILED` run, an unknown algorithm or a run with no `cv_mae_mean` raises before anything is written.
+- [x] `run_training` runs the references only when the sampling run has no finished `baseline` run, registers the baseline first and then each model as its run closes, honours `models`, keeps the config order and returns the versions by name. A model that raises leaves the versions already registered in place and the error propagates.
+- [x] Nothing is written to `champion_history`, `predictions`, the `champion` alias or any `test` or `walk_forward` metric, and no test race is read, scored or predicted anywhere in the code of this spec.
+- [x] `scripts/train.py <run_id>` prints the run id and the version of each model, one line per model with its best MAE (mean ± standard deviation) and the gain over the baseline, and exits 0. It exits 1 with a `STOPPED:` line for an unknown run, a missing feature set, too few races, an unknown model name or a Supabase error.
+- [x] `config/features.yml`, `supabase/migrations/` and `pyproject.toml` are unchanged, and the service key appears nowhere in the repo or in the output of the script.
+- [x] After the real run, Supabase has 7 `model_versions` rows (the baseline and the six models) and 28 `metrics` rows with `split = 'train'`, MLflow has 7 versions of `f1-race-pace` and no `champion` alias, and `champion_history` is empty.
+- [x] After the real run, the sampling `run_id`, the seven version ids and the total time are in `DECISIONS.md`.
 
 ---
 
