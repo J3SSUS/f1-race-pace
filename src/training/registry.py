@@ -42,23 +42,24 @@ def model_version_row(algorithm: str, mlflow_run_id: str, feature_set_id: int, t
     }
 
 
-def metric_rows(model_version_id: int, cv_means: dict[str, float]) -> list[dict]:
-    """The 4 `metrics` rows of a version: the mean over the CV folds, `train` split, overall, original scale.
+def metric_rows(model_version_id: int, values: dict[str, float], split: str = "train") -> list[dict]:
+    """The 4 `metrics` rows of a version for one `split`, overall, original scale.
 
-    `cv_means` is keyed by the SPEC 07 names; keys outside `METRIC_NAMES` (`mean_error`) are not written.
+    For `train`, `values` are the means over the CV folds; for `test`, the scores on the test races. It is keyed by
+    the SPEC 07 names; keys outside `METRIC_NAMES` (`mean_error`) are not written.
     """
-    missing = [name for name in METRIC_NAMES if name not in cv_means]
+    missing = [name for name in METRIC_NAMES if name not in values]
     if missing:
-        raise ValueError(f"cv_means has no {', '.join(missing)}")
+        raise ValueError(f"values has no {', '.join(missing)}")
     return [
         {
             "model_version_id": model_version_id,
             "race_id": None,
-            "split": "train",
+            "split": split,
             "segment_type": "overall",
             "segment_value": None,
             "metric_name": METRIC_NAMES[name],
-            "value": float(cv_means[name]),
+            "value": float(values[name]),
         }
         for name in METRIC_NAMES
     ]

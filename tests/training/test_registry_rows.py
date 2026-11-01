@@ -91,3 +91,8 @@ def test_missing_race_raises_with_a_clear_message():
 def test_split_without_train_races_raises():
     with pytest.raises(StoreError, match="no train race"):
         last_train_race_id(FakeSupabase({"races": []}), split_frame([(2024, 1, "test")]))
+
+
+def test_metric_rows_are_train_by_default_and_take_another_split():
+    assert {r["split"] for r in metric_rows(1, CV)} == {"train"}
+    assert {r["split"] for r in metric_rows(1, CV, split="test")} == {"test"}
