@@ -1,4 +1,5 @@
 import pytest
+from fake_supabase import FakeSupabase
 
 from common.supabase_io import BATCH_SIZE, get_client, upsert_rows
 
@@ -86,3 +87,48 @@ def test_get_client_reads_the_env_file(tmp_path, monkeypatch):
     seen = []
     get_client(env_file=env_file, create=lambda url, key: seen.append((url, key)))
     assert seen == [(ENV["SUPABASE_URL"], SECRET)]
+
+
+def test_insert_rows_adds_rows_with_the_next_identity():
+    from common.supabase_io import insert_rows
+
+    client = FakeSupabase({"champion_history": [{"champion_id": 4, "model_version_id": 1}]})
+    stored = insert_rows(client, "champion_history", [{"model_version_id": 2, "promoted_by": "manual"}])
+    assert stored == [{"champion_id": 5, "model_version_id": 2, "promoted_by": "manual"}]
+    assert client.count("champion_history") == 2
+
+
+def test_update_rows_changes_only_the_matching_rows_and_none_matches_null():
+    from common.supabase_io import update_rows
+
+    client = FakeSupabase(
+        {
+            "champion_history": [
+                {"champion_id": 1, "demoted_at": "2026-11-01"},
+                {"champion_id": 2, "demoted_at": None},
+                {"champion_id": 3, "demoted_at": None},
+            ]
+        }
+    )
+    assert update_rows(client, "champion_history", {"demoted_at": "now"}, {"champion_id": 3}) == [
+        {"champion_id": 3, "demoted_at": "now"}
+    ]
+    assert [r["demoted_at"] for r in client.tables["champion_history"]] == ["2026-11-01", None, "now"]
+    assert len(update_rows(client, "champion_history", {"demoted_at": "later"}, {"demoted_at": None})) == 1
+    assert update_rows(client, "champion_history", {"demoted_at": "x"}, {"champion_id": 99}) == []
+
+
+def test_insert_and_update_errors_name_the_table_and_never_the_response():
+    from common.supabase_io import insert_rows, update_rows
+
+    class Broken:
+        def table(self, name):
+            raise ConnectionError("Bearer secret-service-key-123")
+
+    for call in (
+        lambda: insert_rows(Broken(), "champion_history", [{"a": 1}]),
+        lambda: update_rows(Broken(), "champion_history", {"a": 1}, {"b": 2}),
+    ):
+        with pytest.raises(RuntimeError, match="champion_history") as error:
+            call()
+        assert "secret-service-key" not in str(error.value) and "ConnectionError" in str(error.value)
