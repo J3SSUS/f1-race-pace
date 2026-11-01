@@ -4,7 +4,32 @@ The test never enters here: the candidate is chosen from cross-validated predict
 be touched once, to report.
 """
 
+from dataclasses import dataclass
+
 import numpy as np
+import pandas as pd
+
+SIMPLICITY = ("ridge", "elasticnet", "random_forest", "lightgbm", "xgboost", "catboost")  # simplest first; breaks ties
+BASELINE = "baseline"
+
+
+@dataclass(frozen=True)
+class Comparison:
+    name: str  # model name
+    cv_mae: float  # pooled MAE over the OOF rows
+    diff: float  # MAE(model) - MAE(reference); > 0 means worse
+    ci_low: float  # 2.5 percentile of the bootstrap difference
+    ci_high: float  # 97.5 percentile
+    not_worse: bool  # ci_low <= 0: not significantly worse than the reference
+
+
+@dataclass(frozen=True)
+class Selection:
+    reference: str  # the model with the lowest cv_mae
+    candidate: str | None  # the simplest not_worse model
+    table: list[Comparison]  # the six models, in SIMPLICITY order
+    vs_baseline: Comparison | None  # candidate vs baseline; diff < 0 is better
+    beats_baseline: bool  # vs_baseline.ci_high < 0
 
 
 def paired_block_bootstrap(err_a, err_b, races, n_boot: int = 1000, seed: int = 42) -> tuple[float, float, float]:
@@ -39,3 +64,46 @@ def paired_block_bootstrap(err_a, err_b, races, n_boot: int = 1000, seed: int = 
     boot = diff_sum[picks].sum(axis=1) / rows[picks].sum(axis=1)
     low, high = np.percentile(boot, [2.5, 97.5])
     return float(diff.mean()), float(low), float(high)
+
+
+def _aligned_errors(oof: dict[str, pd.DataFrame]) -> tuple[dict[str, np.ndarray], np.ndarray]:
+    """Absolute errors of every version over the same rows, sorted by `entry_id`, and the race of each row."""
+    missing = [name for name in (BASELINE, *SIMPLICITY) if name not in oof]
+    if missing:
+        raise ValueError(f"no OOF predictions for: {', '.join(missing)}")
+    errors, reference_ids, races = {}, None, None
+    for name in (BASELINE, *SIMPLICITY):
+        frame = oof[name].sort_values("entry_id", ignore_index=True)
+        ids = frame["entry_id"].to_numpy()
+        if len(np.unique(ids)) != len(ids):
+            raise ValueError(f"the OOF of {name} has repeated entry_id values")
+        if reference_ids is None:
+            reference_ids = ids
+            races = (frame["year"] * 100 + frame["round"]).to_numpy()
+        elif not np.array_equal(ids, reference_ids):
+            raise ValueError(f"the OOF of {name} does not cover the same entry_id values as the {BASELINE}")
+        errors[name] = np.abs(frame["y_pred"].to_numpy(dtype="float64") - frame["y_true"].to_numpy(dtype="float64"))
+    return errors, races
+
+
+def select(oof: dict[str, pd.DataFrame], n_boot: int = 1000, seed: int = 42) -> Selection:
+    """Pick the candidate among the six models from their out-of-fold errors.
+
+    The reference is the model with the lowest cross-validated MAE (never the baseline). The candidate is the first
+    model in `SIMPLICITY` that is not significantly worse than the reference (`ci_low <= 0`), so a tie goes to the
+    simpler one. The baseline is only the bar the candidate must beat (`ci_high < 0`); if it does not, `candidate`
+    stays as selected and `beats_baseline` is false.
+    """
+    errors, races = _aligned_errors(oof)
+    mae = {name: float(err.mean()) for name, err in errors.items()}
+    reference = min(SIMPLICITY, key=lambda name: mae[name])  # first in SIMPLICITY on an exact tie
+
+    table = []
+    for name in SIMPLICITY:
+        diff, low, high = paired_block_bootstrap(errors[name], errors[reference], races, n_boot, seed)
+        table.append(Comparison(name, mae[name], diff, low, high, not_worse=low <= 0))
+    candidate = next(row.name for row in table if row.not_worse)  # the reference is always not_worse
+
+    diff, low, high = paired_block_bootstrap(errors[candidate], errors[BASELINE], races, n_boot, seed)
+    vs_baseline = Comparison(candidate, mae[candidate], diff, low, high, not_worse=low <= 0)
+    return Selection(reference, candidate, table, vs_baseline, beats_baseline=high < 0)
