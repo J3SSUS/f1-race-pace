@@ -8,6 +8,11 @@ from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
+from mlflow import MlflowClient
+from mlflow.exceptions import MlflowException
+
+from training.sampling import resolve_tracking_uri
+from training.step import finished_run_id
 
 SIMPLICITY = ("ridge", "elasticnet", "random_forest", "lightgbm", "xgboost", "catboost")  # simplest first; breaks ties
 BASELINE = "baseline"
@@ -64,6 +69,31 @@ def paired_block_bootstrap(err_a, err_b, races, n_boot: int = 1000, seed: int = 
     boot = diff_sum[picks].sum(axis=1) / rows[picks].sum(axis=1)
     low, high = np.percentile(boot, [2.5, 97.5])
     return float(diff.mean()), float(low), float(high)
+
+
+def load_oof(sampling_run_id: str, tracking_uri: str | None = None) -> dict[str, pd.DataFrame]:
+    """The `oof_predictions.parquet` of the baseline and of each of the six models of a sampling run, by name.
+
+    Reads the latest FINISHED run of each name tagged with `sampling_run_id`; a FAILED run is never used. Nothing is
+    refitted. A missing run or artifact raises a `ValueError` that names the model.
+    """
+    uri = resolve_tracking_uri(tracking_uri)
+    client = MlflowClient(uri)
+    try:
+        client.get_run(sampling_run_id)
+    except MlflowException as error:
+        raise ValueError(f"unknown sampling run {sampling_run_id}") from error
+    oof = {}
+    for name in (BASELINE, *SIMPLICITY):
+        run_id = finished_run_id(sampling_run_id, name, uri)
+        if run_id is None:
+            raise ValueError(f"no finished run of {name} for the sampling run {sampling_run_id}")
+        try:
+            path = client.download_artifacts(run_id, "oof_predictions.parquet")
+        except MlflowException as error:
+            raise ValueError(f"the run {run_id} of {name} has no oof_predictions.parquet") from error
+        oof[name] = pd.read_parquet(path)
+    return oof
 
 
 def _aligned_errors(oof: dict[str, pd.DataFrame]) -> tuple[dict[str, np.ndarray], np.ndarray]:
