@@ -46,3 +46,25 @@ def upsert_rows(client, table: str, rows: list[dict], on_conflict: str) -> list[
             ) from None
         stored.extend(response.data)
     return stored
+
+
+def insert_rows(client, table: str, rows: list[dict]) -> list[dict]:
+    """Insert `rows` into `table`, for tables with no natural key to upsert on. Returns the stored rows."""
+    try:
+        return client.table(table).insert(rows).execute().data
+    except Exception as exc:
+        raise RuntimeError(f"insert into {table} failed: {type(exc).__name__}") from None
+
+
+def update_rows(client, table: str, values: dict, match: dict) -> list[dict]:
+    """Set `values` on the rows of `table` whose columns equal `match` (`None` matches NULL). Returns the rows.
+
+    Errors name the table and the type of the failure, never the response.
+    """
+    try:
+        query = client.table(table).update(values)
+        for column, value in match.items():
+            query = query.is_(column, "null") if value is None else query.eq(column, value)
+        return query.execute().data
+    except Exception as exc:
+        raise RuntimeError(f"update of {table} (match {', '.join(match)}) failed: {type(exc).__name__}") from None
