@@ -1,6 +1,6 @@
 # SPEC 10 — Model selection on test and first champion
 
-> **Status:** Approved
+> **Status:** Implemented
 > **Depends on:** SPEC 06 (sampling and split), SPEC 07 (metrics, CV and baseline), SPEC 08 (the six models with Optuna), SPEC 09 (model versions and the `training` step)
 > **Backlog:** Phase 5 of `docs/backlog.md`: "Selection" (compare the baseline and the six models with temporal CV on train, pick the candidate, report its MAE once on test) and "First champion (manual)" (`scripts/promote.py` with the `champion` alias and `champion_history`, `promoted_by = manual`); the `evaluate` step and `scripts/evaluate.py` that the DAG will call
 > **Date:** 2026-11-01
