@@ -32,6 +32,7 @@
 - Tests with no network: a local MLflow store in a temporary folder, a fake Supabase client and synthetic OOF and test tables.
 - The lines in `DECISIONS.md` for what the implementation settles.
 - A real run by the user against the sampling run `e64c04d8897c44d283da0422f2e818ce` in three moments (selection only, evaluation once, manual promotion).
+- A `slow` marker for the tests that take seconds (they log real models in a local MLflow store), skipped by default and run with `--runslow` at the end of the spec; the marker lives in `tests/conftest.py`.
 
 **Out of scope (for future specs):**
 
@@ -175,13 +176,14 @@ Each step leaves `uv run pytest tests` green and can be committed on its own. Th
 10. **Real run: selection first.** The user runs `! uv run python scripts/evaluate.py e64c04d8897c44d283da0422f2e818ce --selection-only`. We review the table and the candidate together before going on. Nothing is written.
 11. **Real run: evaluation, once.** The user runs `! uv run python scripts/evaluate.py e64c04d8897c44d283da0422f2e818ce`. Check in Supabase and MLflow: 8 `metrics` rows with `split = 'test'`, one `evaluate` run, no `champion` alias and an empty `champion_history`. Record in `DECISIONS.md` the run, the candidate, its test MAE with its interval and the comparison with the baseline and with the CV MAE.
 12. **Real run: first champion.** With the result reviewed, the user runs `! uv run python scripts/promote.py <model_version_id>`. Check: alias `champion` on that version and one current row in `champion_history` with `promoted_by = manual`. Record it in `DECISIONS.md`.
-13. **Cleanup.** Tick in `docs/backlog.md` only "Selection" and "First champion (manual)", with the user's agreement, and run `ruff check`, `ruff format --check` and `pytest`.
+13. **Slow tests.** `tests/conftest.py` registers the `slow` marker and the `--runslow` option, and skips slow tests unless the option is given. The tests to mark are the slowest ones by `pytest --durations`, not a guess. Check: `uv run pytest tests` skips them and passes, `uv run pytest tests --runslow` runs all of them and passes, and a skipped test says why.
+14. **Cleanup.** Tick in `docs/backlog.md` only "Selection" and "First champion (manual)", with the user's agreement, and run `ruff check`, `ruff format --check` and `pytest --runslow`.
 
 ---
 
 ## Acceptance criteria
 
-- [ ] `uv run pytest tests` passes without network access, including the new tests of `src/training/selection.py`, `src/training/evaluation.py`, `scripts/evaluate.py` and `scripts/promote.py`, and the tests of SPEC 07, 08 and 09 unchanged.
+- [ ] `uv run pytest tests --runslow` (the full suite) and `uv run pytest tests` (without the slow tests) pass without network access, including the new tests of `src/training/selection.py`, `src/training/evaluation.py`, `scripts/evaluate.py` and `scripts/promote.py`, and the tests of SPEC 07, 08 and 09 unchanged.
 - [ ] `uv run ruff check src scripts tests` and `uv run ruff format --check src scripts tests` report no problems.
 - [ ] `paired_block_bootstrap` gives a difference of 0 and an interval that includes 0 for two identical models, an interval with `ci_high < 0` for a model that is better in every race, and the same result for the same seed. Rows of one race are always resampled together, and inputs of different length raise a clear error.
 - [ ] `select` takes as reference the model with the lowest CV MAE among the six models, never the baseline. The candidate is the first model in `SIMPLICITY` whose interval has `ci_low <= 0`, so a tie goes to the simpler model and a significantly worse model is never chosen. The table comes out in `SIMPLICITY` order.

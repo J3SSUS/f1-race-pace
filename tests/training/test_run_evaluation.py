@@ -16,6 +16,8 @@ from training.registry import REGISTERED_MODEL, register_version
 from training.sampling import register_run
 from training.selection import BASELINE, SIMPLICITY
 
+pytestmark = pytest.mark.slow  # logs real models in a local MLflow store: needs --runslow
+
 NOW = datetime(2026, 11, 1, 12, 0, tzinfo=UTC)
 N_RACES, DRIVERS = 8, 4
 N = N_RACES * DRIVERS

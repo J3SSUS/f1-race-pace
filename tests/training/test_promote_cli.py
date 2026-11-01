@@ -10,6 +10,8 @@ from test_run_evaluation import parent, run, seven, supabase  # noqa: F401
 from training.evaluation import test_metric_rows
 from training.registry import REGISTERED_MODEL
 
+pytestmark = pytest.mark.slow  # logs real models in a local MLflow store: needs --runslow
+
 SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "promote.py"
 
 

@@ -11,6 +11,8 @@ import training.evaluation as evaluation
 from training.evaluation import run_evaluation
 from training.selection import BASELINE, SIMPLICITY, load_oof
 
+pytestmark = pytest.mark.slow  # logs real models in a local MLflow store: needs --runslow
+
 SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "evaluate.py"
 
 

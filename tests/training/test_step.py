@@ -14,6 +14,8 @@ from training.registry import REGISTERED_MODEL
 from training.sampling import register_run
 from training.step import run_training
 
+pytestmark = pytest.mark.slow  # logs real models in a local MLflow store: needs --runslow
+
 NOW = datetime(2026, 10, 25, 12, 0, tzinfo=UTC)
 
 
