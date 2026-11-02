@@ -6,6 +6,7 @@ The explainer is picked by the champion's algorithm (`EXPLAINERS`): `LinearExpla
 Explaining never promotes: it sets no alias and writes no `champion_history`, `metrics` or `predictions`.
 """
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -22,10 +23,10 @@ from sklearn.pipeline import Pipeline
 from common.config import load_config
 from common.supabase_io import get_client
 from features.catalog import load_catalog
-from features.store import read_table
-from training.data import TrainSet
+from features.store import StoreError, read_table, read_wide
+from training.data import NOT_FEATURES, TARGET, TrainSet
 from training.registry import REGISTERED_MODEL
-from training.sampling import SAMPLING_TAG, resolve_tracking_uri
+from training.sampling import SAMPLING_TAG, read_split, resolve_tracking_uri
 
 ALIAS = "champion"
 EXPLAINERS = {
@@ -196,3 +197,61 @@ def calibration_line(oof: pd.DataFrame) -> dict[str, float]:
         "n_rows": len(oof),
         "n_races": int(oof[["year", "round"]].drop_duplicates().shape[0]),
     }
+
+
+def load_explain_rows(
+    run_id: str,
+    client=None,
+    *,
+    version: str = "v1",
+    tracking_uri: str | None = None,
+    reader: Callable = read_wide,
+    splitter: Callable = read_split,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """`(X, meta)` of the valid rows of the train and test races of the sampling run, WITHOUT the target.
+
+    `X` has the 15 features in catalog order. `meta` has `entry_id`, `year`, `round`, `driver` and `split`
+    (`"train"` or `"test"`), with the same index as `X`, in the order of `read_wide`. The split is read first, so an
+    unknown run stops before Supabase is touched. The target and the other ground-truth columns are dropped as soon as
+    the rows are chosen: no return value holds them. Both sides of the split must have at least one valid row.
+    """
+    labels = splitter(run_id, tracking_uri)[["year", "round", "split"]]
+    wide = reader(client if client is not None else get_client(), version)
+
+    rows = wide.merge(labels, on=["year", "round"], how="inner")  # keeps the order of `wide`; drops other races
+    rows = rows[rows["is_valid_row"].to_numpy()].reset_index(drop=True)
+    for side in ("train", "test"):
+        if not (rows["split"] == side).any():
+            raise ValueError(f"The {side} races of run '{run_id}' have no valid row in feature set {version}")
+
+    features = [c for c in rows.columns if c not in NOT_FEATURES | {"split"}]
+    return rows[features], rows[["entry_id", "year", "round", "driver", "split"]]
+
+
+def read_actuals(client, entry_ids: list[int], version: str = "v1") -> dict[int, float]:
+    """`race_pace_delta_pct` of the entries asked for and of no other: the one read of a test target in SPEC 11.
+
+    It asks Supabase for those entries only (not the whole table). The caller chooses the entries from the
+    predictions first; the value is only displayed, never used in a metric, a choice or a tuning. `version` is
+    accepted like in the other readers; the target is the same for every feature set. An entry that does not exist,
+    or has no actual value, raises `ValueError`.
+    """
+    wanted = sorted(set(entry_ids))
+    if not wanted:
+        return {}
+    try:
+        rows = (
+            client.table("ground_truth")
+            .select("entry_id,actual_pace_delta_pct")
+            .in_("entry_id", wanted)
+            .range(0, len(wanted) - 1)
+            .execute()
+            .data
+        )
+    except Exception as exc:
+        raise StoreError(f"read from ground_truth failed: {type(exc).__name__}") from None
+    found = {r["entry_id"]: r["actual_pace_delta_pct"] for r in rows}
+    missing = [e for e in wanted if found.get(e) is None]
+    if missing:
+        raise ValueError(f"no {TARGET} for entries {missing}: they do not exist in ground_truth or have no value")
+    return {e: float(found[e]) for e in wanted}
