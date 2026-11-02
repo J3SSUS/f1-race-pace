@@ -52,6 +52,7 @@ class Query:
         self._insert: list[dict] | None = None
         self._update: dict | None = None
         self._filters: list[tuple[str, object]] = []  # (column, value); a None value matches NULL
+        self._in: list[tuple[str, set]] = []  # (column, allowed values), applied by select
 
     def select(self, columns: str = "*") -> "Query":
         self._selecting = True
@@ -78,6 +79,10 @@ class Query:
         self._filters.append((column, value))
         return self
 
+    def in_(self, column: str, values: list) -> "Query":
+        self._in.append((column, set(values)))
+        return self
+
     def is_(self, column: str, value: str) -> "Query":
         assert value == "null", "the fake only knows IS NULL"
         self._filters.append((column, None))
@@ -97,7 +102,10 @@ class Query:
     def _execute_select(self) -> Response:
         first, last = self._range
         stop = min(last + 1, first + PAGE_LIMIT)
-        rows = self._client.tables.get(self._table, [])[first:stop]
+        rows = self._client.tables.get(self._table, [])
+        for column, allowed in self._in:
+            rows = [r for r in rows if r.get(column) in allowed]
+        rows = rows[first:stop]
         if self._columns is not None:
             rows = [{c: row.get(c) for c in self._columns} for row in rows]
         data = [dict(row) for row in rows]
