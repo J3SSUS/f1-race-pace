@@ -9,6 +9,7 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
+import pandas as pd
 from mlflow import MlflowClient
 from mlflow.exceptions import MlflowException
 
@@ -187,3 +188,97 @@ def load_card_inputs(config: TrainingConfig | None = None, client=None, tracking
         split=_split_summary(sampling_run_id, config, uri),
         cv_folds=config.cv.folds,
     )
+
+
+@dataclass(frozen=True)
+class SegmentError:
+    segment_type: str  # "team" | "circuit_type"
+    segment_value: str
+    n_rows: int
+    n_races: int
+    mae: float  # |y_true - y_pred| mean of the champion, out-of-fold rows
+    baseline_mae: float  # the same for the baseline, on the same rows
+    bias: float  # mean(y_pred - y_true) of the champion: positive = predicted slower than it was
+    few_rows: bool  # n_rows < MIN_SEGMENT_ROWS
+
+
+SEGMENT_TYPES = ("team", "circuit_type")  # in the order the card shows them
+
+
+def read_entry_segments(client) -> pd.DataFrame:
+    """`entry_id`, `team` and `circuit_type` of every race entry. The only Supabase read of the card.
+
+    Reads four public reference tables (`race_entries`, `teams`, `races`, `circuits`), read-only. An entry whose team
+    or circuit cannot be found keeps a missing value; `segment_errors` raises on it.
+    """
+    entries = pd.DataFrame(read_table(client, "race_entries", "entry_id,race_id,team_id"))
+    teams = pd.DataFrame(read_table(client, "teams", "team_id,name")).rename(columns={"name": "team"})
+    races = pd.DataFrame(read_table(client, "races", "race_id,circuit_id"))
+    circuits = pd.DataFrame(read_table(client, "circuits", "circuit_id,circuit_type"))
+    merged = (
+        entries.merge(teams, on="team_id", how="left")
+        .merge(races, on="race_id", how="left")
+        .merge(circuits, on="circuit_id", how="left")
+    )
+    return merged[["entry_id", "team", "circuit_type"]].reset_index(drop=True)
+
+
+def _unique_entries(frame: pd.DataFrame, what: str) -> pd.Index:
+    ids = pd.Index(frame["entry_id"])
+    if ids.has_duplicates:
+        raise ValueError(f"the {what} out-of-fold predictions have repeated entry_id values")
+    return ids
+
+
+def segment_errors(oof: pd.DataFrame, baseline_oof: pd.DataFrame, segments: pd.DataFrame) -> list[SegmentError]:
+    """MAE, bias and size of the champion by team and by `circuit_type`, with the baseline's MAE on the same rows.
+
+    Both OOF tables must cover the same entries and every entry must have a team and a circuit type, or it raises.
+    The result lists the teams first and then the circuit types, each with the largest champion MAE first (ties by
+    name). Nothing here reads a test row.
+    """
+    champion_ids = _unique_entries(oof, "champion's")
+    baseline_ids = _unique_entries(baseline_oof, "baseline's")
+    if set(champion_ids) != set(baseline_ids):
+        only = sorted(set(champion_ids) ^ set(baseline_ids))
+        raise ValueError(
+            f"the champion's and the baseline's out-of-fold predictions do not cover the same entries "
+            f"({len(only)} differ, e.g. entry_id {only[0]})"
+        )
+    segments = segments.drop_duplicates("entry_id").set_index("entry_id")
+    unknown = sorted(set(champion_ids) - set(segments.index))
+    if unknown:
+        raise ValueError(f"{len(unknown)} entries have no team or circuit type (e.g. entry_id {unknown[0]})")
+    mapped = segments.loc[champion_ids, list(SEGMENT_TYPES)]
+    empty = mapped[mapped.isna().any(axis=1)]
+    if not empty.empty:
+        raise ValueError(f"{len(empty)} entries have no team or circuit type (e.g. entry_id {empty.index[0]})")
+
+    frame = oof[["entry_id", "year", "round", "y_true", "y_pred"]].copy()
+    frame["error"] = frame["y_pred"] - frame["y_true"]
+    frame["abs_error"] = frame["error"].abs()
+    baseline = baseline_oof.set_index("entry_id")
+    frame["baseline_abs_error"] = (
+        (baseline.loc[frame["entry_id"], "y_pred"] - baseline.loc[frame["entry_id"], "y_true"]).abs().to_numpy()
+    )
+    for kind in SEGMENT_TYPES:
+        frame[kind] = mapped[kind].to_numpy()
+
+    result = []
+    for kind in SEGMENT_TYPES:
+        rows = []
+        for value, part in frame.groupby(kind, sort=True):
+            rows.append(
+                SegmentError(
+                    segment_type=kind,
+                    segment_value=str(value),
+                    n_rows=len(part),
+                    n_races=len(part[["year", "round"]].drop_duplicates()),
+                    mae=float(part["abs_error"].mean()),
+                    baseline_mae=float(part["baseline_abs_error"].mean()),
+                    bias=float(part["error"].mean()),
+                    few_rows=len(part) < MIN_SEGMENT_ROWS,
+                )
+            )
+        result.extend(sorted(rows, key=lambda r: (-r.mae, r.segment_value)))
+    return result
