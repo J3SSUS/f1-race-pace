@@ -16,11 +16,14 @@ import pandas as pd
 import shap
 from mlflow import MlflowClient
 from mlflow.exceptions import MlflowException
+from sklearn.inspection import permutation_importance
 from sklearn.pipeline import Pipeline
 
+from common.config import load_config
 from common.supabase_io import get_client
 from features.catalog import load_catalog
 from features.store import read_table
+from training.data import TrainSet
 from training.registry import REGISTERED_MODEL
 from training.sampling import SAMPLING_TAG, resolve_tracking_uri
 
@@ -144,3 +147,52 @@ def shap_by_feature(champion: Champion, X: pd.DataFrame, background: pd.DataFram
         )
     columns = {name: values[:, [i for i, o in enumerate(owners) if o == name]].sum(axis=1) for name in names}
     return pd.DataFrame(columns, index=X.index), base_value
+
+
+def permutation_importance_mae(
+    champion: Champion, train: TrainSet, *, n_repeats: int = N_REPEATS, seed: int | None = None
+) -> pd.DataFrame:
+    """How much the MAE of the champion rises when each of the 15 original features is permuted, on the train rows.
+
+    The permutation is done on the pipeline's input columns (not the encoded ones) over the valid rows of train, with
+    the champion as it was fitted. The seed defaults to `optuna.seed` of the config. Columns `feature`,
+    `mae_increase_mean` and `mae_increase_std`, largest mean first (a tie keeps the catalog order).
+    """
+    seed = load_config().optuna.seed if seed is None else seed
+    result = permutation_importance(
+        champion.model,
+        train.X,
+        train.y,
+        scoring="neg_mean_absolute_error",
+        n_repeats=n_repeats,
+        random_state=seed,
+    )
+    frame = pd.DataFrame(
+        {
+            "feature": list(train.X.columns),
+            "mae_increase_mean": result.importances_mean,
+            "mae_increase_std": result.importances_std,
+        }
+    )
+    return frame.sort_values("mae_increase_mean", ascending=False, kind="stable").reset_index(drop=True)
+
+
+def calibration_line(oof: pd.DataFrame) -> dict[str, float]:
+    """The Mincer-Zarnowitz line of the out-of-fold predictions: `y_true = intercept + slope * y_pred`.
+
+    A calibrated model has slope 1 and intercept 0. Returns `slope`, `intercept`, `n_rows` and `n_races` (distinct
+    `(year, round)`). An empty OOF, or predictions that do not vary, raise `ValueError`.
+    """
+    if oof.empty:
+        raise ValueError("the out-of-fold predictions have no rows")
+    y_true = oof["y_true"].to_numpy(dtype="float64")
+    y_pred = oof["y_pred"].to_numpy(dtype="float64")
+    if np.ptp(y_pred) == 0:
+        raise ValueError("the predictions do not vary, so the calibration line is undefined")
+    slope, intercept = np.polyfit(y_pred, y_true, 1)
+    return {
+        "slope": float(slope),
+        "intercept": float(intercept),
+        "n_rows": len(oof),
+        "n_races": int(oof[["year", "round"]].drop_duplicates().shape[0]),
+    }
