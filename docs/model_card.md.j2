@@ -1,0 +1,131 @@
+# Model card: f1-race-pace, version {{ version }} ({{ algorithm }})
+
+{{ generated }} · explain run {{ explain_run_id }} · evaluate run {{ evaluate_run_id }} · sampling run {{ sampling_run_id }}
+
+## 1. What it predicts
+
+After Saturday qualifying, the model predicts the race pace of each driver for Sunday, `race_pace_delta_pct`: the median clean lap of the driver relative to the median clean lap of the field, in percent. A negative value means faster than the field and a positive one means slower.
+
+{{ notes["Intended use"] }}
+
+### Test result
+
+Scored once on {{ test.n_rows }} valid rows of {{ test.n_races }} test races, against the qualifying baseline (a linear regression on the qualifying gap). Each value is followed by its {{ test.interval }}. Lower is better for MAE and RMSE; higher is better for R² and pairwise accuracy.
+
+| Metric | {{ model_name }} | Baseline |
+| --- | --- | --- |
+{% for m in test.metrics %}
+| {{ m.label }} | {{ m.champion }} {{ m.champion_interval }} | {{ m.baseline }} {{ m.baseline_interval }} |
+{% endfor %}
+
+## 2. What weighs most
+
+Importance describes how this model uses each feature, not how much the feature matters for racing: correlated features share their importance, and a feature that looks unimportant here can still matter in the world. Permutation importance is the increase in MAE on the training rows when the feature is shuffled, so it is optimistic compared with held-out data. Mean |SHAP| is the average size of the feature's contribution to the prediction.
+
+| Feature | Permutation importance (MAE increase, mean ± std) | Mean abs SHAP |
+| --- | --- | --- |
+{% for row in importance %}
+| `{{ row.feature }}` | {{ row.permutation }} ± {{ row.std }} | {{ row.shap }} |
+{% endfor %}
+
+{% for chart in charts.importance %}
+![{{ chart.alt }}]({{ chart.path }})
+
+{% endfor %}
+{% if coefficients %}
+The model is linear, so its coefficients are shown as well (numeric features are standardized; categories are one-hot columns).
+
+| Column | Coefficient |
+| --- | --- |
+{% for row in coefficients %}
+| `{{ row.name }}` | {{ row.value }} |
+{% endfor %}
+
+![{{ charts.coefficients.alt }}]({{ charts.coefficients.path }})
+
+{% endif %}
+## 3. A concrete case
+
+The two cases are the driver predicted fastest and the driver predicted slowest in the most recent test race. They are the extremes of the prediction, not the cases where the model fails, and their error is shown as it is. The prediction is the base value plus the contributions of the features.
+
+{% for case in cases %}
+### {{ case.title }}
+
+{{ case.driver }}, {{ case.race }}. Prediction {{ case.prediction }}, actual {{ case.actual }}, error {{ case.error }} (prediction minus actual). Base value {{ case.base_value }}.
+
+| Feature | Contribution |
+| --- | --- |
+{% for row in case.contributions %}
+| `{{ row.feature }}` | {{ row.value }} |
+{% endfor %}
+
+![{{ case.chart.alt }}]({{ case.chart.path }})
+
+{% endfor %}
+## 4. Where it fails
+
+### Calibration
+
+On {{ calibration.n_rows }} out-of-fold rows of {{ calibration.n_races }} races, the actual value is {{ calibration.intercept }} + {{ calibration.slope }} × predicted (Mincer-Zarnowitz line). A slope of one and an intercept of zero would be a perfectly calibrated model.
+
+{% for chart in charts.calibration %}
+![{{ chart.alt }}]({{ chart.path }})
+
+{% endfor %}
+### Errors by segment
+
+These errors come from the out-of-fold predictions of cross-validation on the training races, not from the test races: the test result is the one in the test result section above. Bias is the mean of prediction minus actual, so a positive bias means predicted slower than it was. No interval is computed per segment, so the differences between close segments are not significant.
+
+{% for group in segments %}
+#### {{ group.title }}
+
+| Segment | Rows | Races | MAE | Baseline MAE | Bias | Note |
+| --- | --- | --- | --- | --- | --- | --- |
+{% for row in group.rows %}
+| {{ row.value }} | {{ row.n_rows }} | {{ row.n_races }} | {{ row.mae }} | {{ row.baseline_mae }} | {{ row.bias }} | {{ row.note }} |
+{% endfor %}
+
+{% endfor %}
+### Known limitations
+
+{{ notes["Known limitations"] }}
+
+### 2026 regulations
+
+{{ notes["2026 regulations"] }}
+
+## 5. Data and versions
+
+### Data and split
+
+- Source: OpenF1, seasons {{ data.first_year }} to {{ data.last_year }}{{ data.cutoff }}.
+- Split: chronological by race, with {{ split.test_fraction }} of the races in test. Train has {{ split.n_train_races }} races ({{ split.first_train }} to {{ split.last_train }}) and test has {{ split.n_test_races }} ({{ split.first_test }} to {{ split.last_test }}).
+- Cross-validation: {{ cv_folds }} temporal folds inside train.
+- Feature set: {{ feature_set_version }}. The model was trained through {{ trained_through }}.
+
+### Model
+
+- Algorithm: {{ model_name }}.
+- Hyperparameters (best Optuna trial):
+{% for row in hyperparameters %}
+  - `{{ row.name }}`: {{ row.value }}
+{% endfor %}
+- Tuning budget: {{ tuning.n_trials }} trials, seed {{ tuning.seed }}, {{ tuning.n_folds }} folds.
+
+### How it was chosen
+
+The candidate was picked on the out-of-fold errors of train, never on test: the simplest model not significantly worse than the best one. Reference: {{ selection.reference }}. Candidate: {{ selection.candidate }}. {{ selection.verdict }}
+
+| Model | CV MAE | Difference to reference | Interval | Not worse |
+| --- | --- | --- | --- | --- |
+{% for row in selection.table %}
+| {{ row.name }} | {{ row.cv_mae }} | {{ row.diff }} | {{ row.interval }} | {{ row.not_worse }} |
+{% endfor %}
+
+### Versions
+
+- Model version: {{ version }} (MLflow version {{ mlflow_version }}), {{ promoted }}.
+- Sampling run: {{ sampling_run_id }}.
+- Explain run: {{ explain_run_id }}.
+- Evaluate run: {{ evaluate_run_id }}.
+- Generated: {{ generated }}.

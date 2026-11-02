@@ -22,6 +22,11 @@ PARAMS = {
 }
 EXPLAIN_JSON = {"run_id": "x", "model_version_id": 7, "importance": [], "cases": []}
 SELECTION = {"candidate": "ridge", "reference": "ridge", "table": []}
+TRAINED = {"feature_set_id": 5, "trained_through_race_id": 102}
+REFERENCE = {
+    "feature_sets": [{"feature_set_id": 5, "version": "v1"}, {"feature_set_id": 6, "version": "v2"}],
+    "races": [{"race_id": 102, "year": 2024, "round": 2}, {"race_id": 103, "year": 2024, "round": 3}],
+}
 METRICS = {"mae": 0.4, "rmse": 0.5, "r2": 0.1, "pairwise_accuracy": 0.6}
 TEST_METRICS = {
     name: {"metrics": METRICS, "intervals": {m: [0.1, 0.9] for m in METRICS}, "n_rows": 10, "n_races": 2}
@@ -81,9 +86,10 @@ def world(uri, parent):
     mlflow_version = register(uri, parent, training)
     supabase = FakeSupabase(
         {
+            **REFERENCE,
             "model_versions": [
-                {"model_version_id": 7, "mlflow_run_id": training, "algorithm": "ridge"},
-                {"model_version_id": 3, "mlflow_run_id": "other", "algorithm": "baseline"},
+                {"model_version_id": 7, "mlflow_run_id": training, "algorithm": "ridge", **TRAINED},
+                {"model_version_id": 3, "mlflow_run_id": "other", "algorithm": "baseline", **TRAINED},
             ],
             "champion_history": [
                 {
@@ -115,6 +121,8 @@ def test_every_field_comes_from_the_right_run(world):
     assert inputs.model_version_id == 7
     assert inputs.mlflow_version == world["mlflow_version"]
     assert inputs.algorithm == "ridge"
+    assert inputs.feature_set_version == "v1"
+    assert inputs.trained_through == {"year": 2024, "round": 2}
     assert inputs.sampling_run_id == world["parent"]
     assert inputs.explain_run_id == world["explain"]
     assert inputs.evaluate_run_id == world["evaluate"]
@@ -152,7 +160,8 @@ def test_a_training_run_without_hyperparameters_raises_and_names_the_run(uri, pa
     evaluate_run(uri, parent)
     supabase = FakeSupabase(
         {
-            "model_versions": [{"model_version_id": 7, "mlflow_run_id": training, "algorithm": "ridge"}],
+            **REFERENCE,
+            "model_versions": [{"model_version_id": 7, "mlflow_run_id": training, "algorithm": "ridge", **TRAINED}],
             "champion_history": [],
         }
     )
@@ -177,6 +186,16 @@ def test_no_alias_raises(uri, parent):
 def test_a_champion_with_no_model_versions_row_raises(world):
     world["supabase"].tables["model_versions"].clear()
     with pytest.raises(ValueError, match="model_versions"):
+        load(world)
+
+
+def test_a_missing_feature_set_or_training_race_raises_and_names_it(world):
+    world["supabase"].tables["feature_sets"].clear()
+    with pytest.raises(ValueError, match="feature set 5"):
+        load(world)
+    world["supabase"].tables["feature_sets"].append({"feature_set_id": 5, "version": "v1"})
+    world["supabase"].tables["races"].clear()
+    with pytest.raises(ValueError, match="race 102"):
         load(world)
 
 
@@ -242,7 +261,8 @@ def test_the_champion_is_looked_up_by_its_config_name(uri, parent):
     )
     supabase = FakeSupabase(
         {
-            "model_versions": [{"model_version_id": 7, "mlflow_run_id": training, "algorithm": "rf"}],
+            **REFERENCE,
+            "model_versions": [{"model_version_id": 7, "mlflow_run_id": training, "algorithm": "rf", **TRAINED}],
             "champion_history": [],
         }
     )
