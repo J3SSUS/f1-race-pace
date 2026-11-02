@@ -121,7 +121,7 @@ Metrics that get published:
 - Pairwise ordering accuracy: percentage of driver pairs in a race whose pace order the model gets right (50% equals chance).
 - Error per 2026 race, by team and by circuit type.
 
-The explanation section comes from `MODEL_CARD.md` and has five parts: what it predicts and what it is for; what weighs most (global SHAP and permutation importance of the champion); a concrete case (SHAP of one driver in the most recent race); where it fails (errors by circuit and team, effect of the 2026 regulations); and the model card (data, split, model and FastF1 versions). SHAP is computed only for the champion; if the champion is linear (Ridge or ElasticNet), its coefficients are used instead.
+The explanation section comes from `MODEL_CARD.md` and has five parts: what it predicts and what it is for; what weighs most (global SHAP and permutation importance of the champion); a concrete case (SHAP of one driver in the most recent race); where it fails (errors by circuit and team, effect of the 2026 regulations); and the model card (data, split, model and OpenF1 versions). SHAP is computed only for the champion; if the champion is linear (Ridge or ElasticNet), its coefficients are used instead.
 
 After each qualifying session, the prediction DAG inserts that race's prediction into Supabase; after the race, the ground truth DAG inserts the actual result, and the error is derived in the `prediction_results` view. The page reflects both changes instantly. If a prediction is generated after the race, the generation date gives it away and the page marks it as late.
 
