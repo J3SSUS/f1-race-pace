@@ -1,6 +1,6 @@
 # SPEC 11 — Explaining the champion
 
-> **Status:** Approved
+> **Status:** Implemented
 > **Depends on:** SPEC 05 (feature store load), SPEC 06 (sampling and split), SPEC 07 (metrics, CV and baseline), SPEC 08 (the six models with Optuna), SPEC 09 (model versions and the `training` step), SPEC 10 (selection and first champion)
 > **Backlog:** Phase 5 of `docs/backlog.md`: "SHAP" (for the champion only, plus permutation importance), "Residuals and predicted-vs-actual charts as `.svg`" and "Store `shap_values`"
 > **Date:** 2026-11-01
