@@ -43,6 +43,20 @@ CHARTS_DIR = Path("site/charts")  # relative to the repository root
 
 
 @dataclass(frozen=True)
+class Case:
+    label: str  # "fastest_predicted" | "slowest_predicted"
+    entry_id: int
+    year: int
+    round: int
+    driver: str
+    prediction: float  # race_pace_delta_pct predicted
+    actual: float  # race_pace_delta_pct of the race (read after choosing the case)
+    error: float  # prediction - actual
+    base_value: float  # the explainer's base value
+    contributions: dict[str, float]  # feature -> SHAP; base_value + sum(contributions) == prediction
+
+
+@dataclass(frozen=True)
 class Champion:
     model_version_id: int  # model_versions.model_version_id
     mlflow_version: str  # version of f1-race-pace holding the `champion` alias
@@ -255,3 +269,65 @@ def read_actuals(client, entry_ids: list[int], version: str = "v1") -> dict[int,
     if missing:
         raise ValueError(f"no {TARGET} for entries {missing}: they do not exist in ground_truth or have no value")
     return {e: float(found[e]) for e in wanted}
+
+
+ADDITIVITY_TOLERANCE = 1e-4  # a case whose contributions miss its prediction by more than this is a bug, not a case
+
+
+def build_cases(
+    champion: Champion,
+    X: pd.DataFrame,
+    meta: pd.DataFrame,
+    shap_values: pd.DataFrame,
+    base_value: float,
+    client,
+    *,
+    version: str = "v1",
+    reader: Callable = read_actuals,
+) -> list[Case]:
+    """The two local cases of the most recent test race: the driver predicted fastest and the one predicted slowest.
+
+    `X`, `meta` (from `load_explain_rows`) and `shap_values` (from `shap_by_feature`) share the same index. The
+    most recent test race is the largest `(year, round)` among the `test` rows; the lowest prediction is the fastest
+    (`race_pace_delta_pct` is the gap to the field) and the highest the slowest; a tie goes to the lowest `entry_id`.
+    Both are chosen from the predictions alone and only then `reader` is called, once, with exactly those two
+    entries. The actual values are only attached to the cases: they never take part in the choice. A race with fewer
+    than two valid rows, or with identical predictions for all of them, raises.
+    """
+    test = meta[meta["split"] == "test"]
+    last = test.sort_values(["year", "round"]).iloc[-1]
+    race = test[(test["year"] == last["year"]) & (test["round"] == last["round"])]
+    label = f"{int(last['year'])} round {int(last['round'])}"
+    if len(race) < 2:
+        raise ValueError(f"the most recent test race ({label}) has {len(race)} valid row, two cases need at least two")
+
+    rows = race.assign(prediction=champion.model.predict(X.loc[race.index]))
+    if rows["prediction"].nunique() == 1:
+        raise ValueError(f"the most recent test race ({label}) has the same prediction for every driver")
+    fastest = rows.sort_values(["prediction", "entry_id"]).iloc[0]
+    slowest = rows.assign(neg=-rows["prediction"]).sort_values(["neg", "entry_id"]).iloc[0]
+    chosen = [("fastest_predicted", fastest), ("slowest_predicted", slowest)]
+
+    actuals = reader(client, [int(row["entry_id"]) for _, row in chosen], version)  # the first read of a target
+    cases = []
+    for name, row in chosen:
+        contributions = {feature: float(value) for feature, value in shap_values.loc[row.name].items()}
+        prediction = float(row["prediction"])
+        if abs(base_value + sum(contributions.values()) - prediction) > ADDITIVITY_TOLERANCE:
+            raise ValueError(f"the contributions of entry {int(row['entry_id'])} do not add up to its prediction")
+        actual = actuals[int(row["entry_id"])]
+        cases.append(
+            Case(
+                label=name,
+                entry_id=int(row["entry_id"]),
+                year=int(row["year"]),
+                round=int(row["round"]),
+                driver=str(row["driver"]),
+                prediction=prediction,
+                actual=actual,
+                error=prediction - actual,
+                base_value=base_value,
+                contributions=contributions,
+            )
+        )
+    return cases
