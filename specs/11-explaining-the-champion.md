@@ -16,7 +16,7 @@
   - Finds the champion's `model_versions` row and algorithm from the alias, and loads the model through `runs:/<mlflow_run_id>/model` (the run id is the `mlflow_run_id` tag of the version).
   - Picks the SHAP explainer by algorithm: `LinearExplainer` for Ridge and ElasticNet, `TreeExplainer` for Random Forest, XGBoost, LightGBM and CatBoost. The baseline is not explained. The two explainers cover the six models of SPEC 08.
   - Uses the valid rows of train as the background, applies the pipeline's preprocessing first, and adds the contributions of the one-hot columns of `circuit_type` back into one value per feature, so every row has one SHAP value for each of the 15 features.
-  - Computes the SHAP values of every valid row of train and test and upserts them into `shap_values` (`entry_id`, `model_version_id`, `feature_id`, `shap_value`). The test rows are read by a reader that drops the target before returning.
+  - Computes the SHAP values of every valid row of train and test (the target is dropped before the reader returns) and upserts only those of the two local cases into `shap_values` (`entry_id`, `model_version_id`, `feature_id`, `shap_value`): 30 rows (see `DECISIONS.md`, 2026-11-02).
   - Computes the permutation importance on the valid rows of train with the refit champion: the 15 original features, 30 repeats, seed 42, MAE as the score, reported as the increase of MAE when a feature is permuted (mean and standard deviation).
   - For a linear champion, takes the coefficients of the model for a chart.
   - Builds two local cases from the most recent test race: the driver the model predicts fastest and the one it predicts slowest. They are chosen from the predictions only, before any target is read. Then it reads the actual `race_pace_delta_pct` of those two entries and saves, for each, its `entry_id`, race, driver, prediction, actual value, error, base value and SHAP contributions, so the model card can show them. This is the only read of a test target in this spec: two rows, used only to display, never in a metric, a choice or a tuning.
@@ -107,7 +107,7 @@ def run_explain(config=None, client=None, tracking_uri=None, charts_dir=CHARTS_D
 
 ### Supabase rows
 
-`shap_values`: one row per valid entry of train and test and per feature, about 20,000 rows. Upserted on the table's primary key, so running it again changes nothing.
+`shap_values`: one row per feature for each of the two local cases, 30 rows (the SHAP of every other row is computed but not stored). Upserted on the table's primary key, so running it again changes nothing.
 
 | Column | Value |
 | --- | --- |
@@ -121,10 +121,10 @@ def run_explain(config=None, client=None, tracking_uri=None, charts_dir=CHARTS_D
 | Item | Value |
 | --- | --- |
 | Run | root run of the experiment `f1-race-pace`, name `explain` |
-| Tags | `step = explain`, `sampling_run_id`, `model_version_id`, `algorithm` |
+| Tags | `step = explain`, `sampling_run_id`, `model_version_id`, `algorithm`, `shap_version` |
 | Params | `explainer`, `n_repeats`, `seed`, `background_rows` |
 | Metrics | `calibration_slope`, `calibration_intercept`, `perm_<feature>` and `mean_abs_shap_<feature>` for the 15 features, `case_<label>_prediction`, `case_<label>_actual` |
-| Artifacts | the `.svg` charts and `explain.json` |
+| Artifacts | the `.svg` charts, `explain.json` and `explainer.pkl` (MLflow only: the fitted SHAP explainer and the feature behind each column, to explain any race later; see `DECISIONS.md`, 2026-11-02) |
 
 Files in `site/charts/` (the same ones as MLflow artifacts, overwritten on each run): `coefficients.svg` (linear champions only), `permutation_importance.svg`, `shap_summary.svg`, `case_fastest.svg`, `case_slowest.svg`, `predicted_vs_actual.svg`, `residuals.svg` and `explain.json`.
 
@@ -185,7 +185,7 @@ Each step leaves `uv run pytest tests` green and can be committed on its own. Th
 - [ ] `read_actuals` returns the target of the entries it is asked for and nothing else, and raises for an entry that does not exist. No other code reads a test target except `load_test` (SPEC 10) and `read_actuals`.
 - [ ] The two cases are the lowest and the highest prediction among the valid rows of the most recent test race, in that order, with ties going to the lowest `entry_id`. They are chosen before `read_actuals` is called, which is called with exactly those two entries. `error = prediction − actual`, and the contributions of a case add up to `prediction − base_value`.
 - [ ] Each chart function writes a valid SVG with the model version in its title; `coefficients.svg` is written only for a linear champion; running twice gives byte-identical files.
-- [ ] `shap_values` gets one row per valid entry of train and test and per feature, all with the champion's `model_version_id`, upserted on `entry_id,model_version_id,feature_id`; running it twice leaves the same number of rows; a feature missing from `features` raises before anything is written.
+- [ ] `shap_values` gets one row per feature for each of the two local cases, all with the champion's `model_version_id`, upserted on `entry_id,model_version_id,feature_id`; running it twice leaves the same number of rows; a feature missing from `features` raises before anything is written.
 - [ ] `run_explain` logs one `explain` root run with the tags (`step`, `sampling_run_id`, `model_version_id`, `algorithm`), the params, the metrics and the artifacts of the data model, and writes the same files to `charts_dir`. `explain.json` has the run id, the model version, the generation date, the importance, the calibration line and the two cases with their actual values.
 - [ ] Running `run_explain` twice gives the same `shap_values` and overwrites the files; there is no guard against a second run.
 - [ ] If Supabase raises, nothing is written to `charts_dir` and the `explain` run is not `FINISHED`.
@@ -231,7 +231,7 @@ Each step leaves `uv run pytest tests` green and can be committed on its own. Th
 | `read_actuals` is the first exception to "`load_test` is the only reader of the test target", and it could grow to read more rows | It takes a list of entries and the step calls it with exactly two, chosen from the predictions beforehand; a spy test checks both, and an acceptance criterion names the two readers. The exception is in `DECISIONS.md` before any code |
 | The fastest and slowest predicted drivers are the extremes of the prediction, not the cases where the model fails, so two good cases could give a rosy picture in the model card | They are chosen by prediction so the choice never depends on the target, and the actual value and the error are saved with them. The model card (SPEC 12) must show the error as it is and keep its own "where it fails" section, built from the errors by circuit and team |
 | The most recent test race has fewer than two valid rows, so there are no two different cases | `explain` raises a clear error that names the race. The 2026 backtest and the test of this split have around twenty drivers per race, so it is unlikely |
-| `shap_values` is about 20,000 rows sent in batches of 1,000, and a failure halfway leaves part of them written | The upsert is idempotent on the table's key, so running it again completes the rows. The files and the MLflow run are written after it, so a failed run leaves no charts that belong to partial data |
+| A failure halfway through the `shap_values` upsert (30 rows, one batch) leaves part of them written | The upsert is idempotent on the table's key, so running it again completes the rows. The files and the MLflow run are written after it, so a failed run leaves no charts that belong to partial data |
 | The champion was trained on another sampling run than the one at hand (a new split), so the train and test rows would not match its model | Every read uses the `sampling_run_id` tag of the champion's version, never "the latest" run. The test of step 9 uses a champion whose sampling run is not the newest |
 | The charts in `site/charts/` become stale when the alias moves to another version, because `promote.py` does not run `explain` | Each chart names its model version and `explain.json` has `model_version_id`, so the page (phase 7) can compare it with the current champion. Running `explain` after a promotion is part of promoting; the automatic promotion of phase 9 will call it |
 | The SVG files change between machines or `matplotlib` versions even with a fixed hash salt, and git shows noise | The version is pinned in `pyproject.toml`. The tests check byte-identical files on the same machine and the same version; a difference across machines is accepted and is reviewed in the diff |

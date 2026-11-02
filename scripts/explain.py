@@ -34,7 +34,9 @@ def describe(result: dict, charts_dir: Path) -> list[str]:
         f"champion: version {champion.model_version_id} ({champion.algorithm}), "
         f"explained with the {explainer_kind(champion.algorithm)} explainer"
     ]
-    lines.append(f"SHAP rows upserted: {result['shap_rows']} (base value {explanation.base_value:+.3f})")
+    lines.append(
+        f"SHAP rows upserted (the two cases): {result['shap_rows']} (base value {explanation.base_value:+.3f})"
+    )
     lines.append(f"top {TOP} features by permutation importance (rise of the MAE when permuted):")
     for row in explanation.importance.head(TOP).itertuples():
         lines.append(f"  {row.feature:<28}{row.mae_increase_mean:>+8.3f} ± {row.mae_increase_std:.3f}")

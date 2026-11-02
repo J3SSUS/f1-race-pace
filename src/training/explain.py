@@ -7,6 +7,7 @@ Explaining never promotes: it sets no alias and writes no `champion_history`, `m
 """
 
 import json
+import pickle
 import shutil
 import tempfile
 from collections.abc import Callable
@@ -140,24 +141,38 @@ def _dense(matrix) -> np.ndarray:
     return np.asarray(matrix.toarray() if hasattr(matrix, "toarray") else matrix, dtype="float64")
 
 
-def shap_by_feature(champion: Champion, X: pd.DataFrame, background: pd.DataFrame) -> tuple[pd.DataFrame, float]:
-    """`(rows x 15, base_value)`: the SHAP value of each original feature for each row of `X`.
+def make_explainer(champion: Champion, background: pd.DataFrame):
+    """`(explainer, owners)`: the SHAP explainer of the champion's final estimator and the feature behind each column.
 
-    The pipeline's own preprocessing runs first and the final estimator is explained on the preprocessed matrix; the
-    columns of the one-hot `circuit_type` are summed into one value. `LinearExplainer` uses `background` (the valid
-    rows of train); `TreeExplainer` uses `tree_path_dependent`, whose reference is the data the trees saw. Values and
-    base value are in the scale of the target, and `base_value + row sum` is the pipeline's prediction.
+    `LinearExplainer` uses `background` (the valid rows of train); `TreeExplainer` uses `tree_path_dependent`, whose
+    reference is the data the trees saw.
     """
     kind = explainer_kind(champion.algorithm)
     prep, estimator = champion.model.named_steps["prep"], champion.model.named_steps["model"]
     owners = _feature_of_each_column(prep)
-    matrix = _dense(prep.transform(X))
     if kind == "linear":
         reference = _dense(prep.transform(background))
         # the default masker keeps a random 100 rows: ask for every row of the background
         explainer = shap.LinearExplainer(estimator, shap.maskers.Independent(reference, max_samples=len(reference)))
     else:
         explainer = shap.TreeExplainer(estimator, feature_perturbation="tree_path_dependent")
+    return explainer, owners
+
+
+def shap_by_feature(
+    champion: Champion, X: pd.DataFrame, background: pd.DataFrame, explainer=None, owners: list[str] | None = None
+) -> tuple[pd.DataFrame, float]:
+    """`(rows x 15, base_value)`: the SHAP value of each original feature for each row of `X`.
+
+    The pipeline's own preprocessing runs first and the final estimator is explained on the preprocessed matrix; the
+    columns of the one-hot `circuit_type` are summed into one value. The explainer comes from `make_explainer` (built
+    here from `background` unless `explainer` and `owners` are given, e.g. one loaded from `explainer.pkl`). Values
+    and base value are in the scale of the target, and `base_value + row sum` is the pipeline's prediction.
+    """
+    prep = champion.model.named_steps["prep"]
+    if explainer is None or owners is None:
+        explainer, owners = make_explainer(champion, background)
+    matrix = _dense(prep.transform(X))
     values = np.asarray(explainer.shap_values(matrix))
     base_value = float(np.ravel(explainer.expected_value)[0])
 
@@ -440,6 +455,22 @@ def _draw_all(explanation: Explanation, X: pd.DataFrame, oof: pd.DataFrame, vers
     return [path for path in drawn if path is not None]
 
 
+EXPLAINER_FILE = "explainer.pkl"
+
+
+def explainer_bundle(champion: Champion, explainer, owners: list[str], base_value: float) -> dict:
+    """What `explainer.pkl` holds: enough to compute the SHAP of any race with `shap_by_feature` and the champion."""
+    return {
+        "explainer": explainer,
+        "owners": owners,
+        "base_value": base_value,
+        "algorithm": champion.algorithm,
+        "model_version_id": champion.model_version_id,
+        "mlflow_run_id": champion.mlflow_run_id,
+        "shap_version": shap.__version__,
+    }
+
+
 def _explain_json(champion: Champion, explanation: Explanation, explainer: str, run_id: str, now: datetime) -> dict:
     shap_only = explanation.shap.drop(columns="entry_id")
     return {
@@ -475,11 +506,12 @@ def run_explain(
     """The `explain` step: explain the champion and publish the result.
 
     Everything that can fail without writing runs first (champion, rows, OOF, SHAP, importance, calibration, cases).
-    Then an `explain` root run opens in the sampling run's experiment and, inside it, the SHAP rows are upserted into
-    Supabase, the charts are drawn into a temporary folder and only then copied to `charts_dir` with `explain.json`
-    and logged as artifacts. A Supabase failure leaves `charts_dir` untouched and the run FAILED. It can run any
-    number of times (upsert plus overwritten files) and never promotes: no alias, no `champion_history`, `metrics`
-    or `predictions`. Returns `{"run_id", "champion", "explanation", "files", "shap_rows"}`.
+    Then an `explain` root run opens in the sampling run's experiment and, inside it, the SHAP rows of the two cases
+    (not of every entry) are upserted into Supabase, the charts are drawn into a temporary folder and only then
+    copied to `charts_dir` with `explain.json` and logged as artifacts. A Supabase failure leaves `charts_dir`
+    untouched and the run FAILED. It can run any number of times (upsert plus overwritten files) and never
+    promotes: no alias, no `champion_history`, `metrics` or `predictions`.
+    Returns `{"run_id", "champion", "explanation", "files", "shap_rows"}`.
     """
     config = config or load_config()
     uri = resolve_tracking_uri(tracking_uri)
@@ -488,13 +520,14 @@ def run_explain(
     seed = config.optuna.seed
 
     champion = load_champion(uri, client)
-    explainer = explainer_kind(champion.algorithm)
+    kind = explainer_kind(champion.algorithm)
     X, meta = rows_loader(champion.sampling_run_id, client, version=version, tracking_uri=uri)
     train = train_loader(champion.sampling_run_id, client, version=version, tracking_uri=uri)
     oof = oof_loader(champion, uri)
 
     background = X[(meta["split"] == "train").to_numpy()]
-    values, base_value = shap_by_feature(champion, X, background)
+    explainer, owners = make_explainer(champion, background)
+    values, base_value = shap_by_feature(champion, X, background, explainer, owners)
     importance = permutation_importance_mae(champion, train, seed=seed)
     calibration = calibration_line(oof)
     cases = build_cases(champion, X, meta, values, base_value, client, version=version, reader=actuals_reader)
@@ -515,23 +548,24 @@ def run_explain(
         SAMPLING_TAG: champion.sampling_run_id,
         "model_version_id": str(champion.model_version_id),
         "algorithm": champion.algorithm,
+        "shap_version": shap.__version__,
     }
     with mlflow.start_run(run_name=EXPLAIN, experiment_id=experiment_id, tags=tags) as run:
-        n_rows = upsert_shap_values(client, champion, meta, values)  # Supabase first: a failure writes no file
+        stored = values.index[meta["entry_id"].isin([case.entry_id for case in cases]).to_numpy()]  # only the cases
+        n_rows = upsert_shap_values(client, champion, meta, values.loc[stored])  # Supabase first: no file on failure
 
         with tempfile.TemporaryDirectory() as folder:
             drawn = _draw_all(explanation, X, oof, champion.model_version_id, Path(folder))
             report = Path(folder) / "explain.json"
-            report.write_text(
-                json.dumps(_explain_json(champion, explanation, explainer, run.info.run_id, now), indent=2)
-            )
+            report.write_text(json.dumps(_explain_json(champion, explanation, kind, run.info.run_id, now), indent=2))
             charts_dir = Path(charts_dir)
             charts_dir.mkdir(parents=True, exist_ok=True)
             files = [Path(shutil.copy2(path, charts_dir / path.name)) for path in [*drawn, report]]
+            saved = Path(folder) / EXPLAINER_FILE
+            saved.write_bytes(pickle.dumps(explainer_bundle(champion, explainer, owners, base_value)))
+            mlflow.log_artifact(str(saved))
 
-        mlflow.log_params(
-            {"explainer": explainer, "n_repeats": N_REPEATS, "seed": seed, "background_rows": len(background)}
-        )
+        mlflow.log_params({"explainer": kind, "n_repeats": N_REPEATS, "seed": seed, "background_rows": len(background)})
         metrics = {"calibration_slope": calibration["slope"], "calibration_intercept": calibration["intercept"]}
         for row in importance.itertuples():
             metrics[f"perm_{row.feature}"] = float(row.mae_increase_mean)

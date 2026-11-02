@@ -1,4 +1,5 @@
 import json
+import pickle
 import tempfile
 from pathlib import Path
 
@@ -13,7 +14,7 @@ from test_explain_champion import parent as parent  # noqa: F401
 from common.config import load_config
 from features.catalog import load_catalog
 from training.data import TrainSet
-from training.explain import linear_coefficients, load_champion, run_explain
+from training.explain import linear_coefficients, load_champion, run_explain, shap_by_feature
 from training.registry import REGISTERED_MODEL
 
 FEATURES = [f.name for f in load_catalog().features]
@@ -121,7 +122,8 @@ def test_a_tree_champion_writes_the_run_and_the_same_files_in_the_folder(uri, pa
     assert all(f"perm_{f}" in metrics and f"mean_abs_shap_{f}" in metrics for f in FEATURES)
     assert {"case_fastest_predicted_prediction", "case_slowest_predicted_actual"} <= set(metrics)
     artifacts = {a.path for a in MlflowClient(uri).list_artifacts(result["run_id"])}
-    assert artifacts == written
+    assert artifacts == written | {"explainer.pkl"}  # the explainer is in MLflow only, not in site/charts/
+    assert run.data.tags["shap_version"]
 
 
 def test_a_linear_champion_also_writes_the_coefficients_chart(uri, parent, supabase, inputs, tmp_path):  # noqa: F811
@@ -170,7 +172,7 @@ def test_running_twice_gives_the_same_shap_values_and_overwrites_the_files(uri, 
     first = {p.name: p.read_bytes() for p in tmp_path.glob("*.svg")}
     explain(uri, supabase, inputs, tmp_path)
     assert supabase.tables["shap_values"] == rows
-    assert len(rows) == N * 15
+    assert len(rows) == 2 * 15
     assert {p.name: p.read_bytes() for p in tmp_path.glob("*.svg")} == first
 
 
@@ -190,6 +192,36 @@ def test_a_supabase_failure_leaves_the_folder_empty_and_the_run_failed(uri, pare
     assert not (tmp_path / "charts").exists() or not list((tmp_path / "charts").iterdir())
     runs = mlflow.search_runs(search_all_experiments=True, filter_string="tags.step = 'explain'")
     assert list(runs["status"]) == ["FAILED"]
+
+
+def test_only_the_two_cases_are_stored_in_shap_values(uri, parent, supabase, inputs, tmp_path):  # noqa: F811
+    logged_champion(uri, parent, seeded(supabase), "ridge")
+    result = explain(uri, supabase, inputs, tmp_path)
+    rows = supabase.tables["shap_values"]
+    assert result["shap_rows"] == len(rows) == 30
+    assert {r["entry_id"] for r in rows} == {case.entry_id for case in result["explanation"].cases}
+    assert {r["model_version_id"] for r in rows} == {result["champion"].model_version_id}
+    stored = {(r["entry_id"], r["feature_id"]): r["shap_value"] for r in rows}
+    ids = {r["name"]: r["feature_id"] for r in supabase.tables["features"]}
+    for case in result["explanation"].cases:  # the stored values are the contributions of the case
+        for name, value in case.contributions.items():
+            assert stored[(case.entry_id, ids[name])] == pytest.approx(value)
+
+
+@pytest.mark.parametrize("name", ["ridge", "random_forest"])
+def test_the_saved_explainer_gives_the_same_shap_as_the_run(uri, parent, supabase, inputs, tmp_path, name):  # noqa: F811
+    logged_champion(uri, parent, seeded(supabase), name)
+    result = explain(uri, supabase, inputs, tmp_path)
+    path = MlflowClient(uri).download_artifacts(result["run_id"], "explainer.pkl")
+    with open(path, "rb") as handle:
+        bundle = pickle.load(handle)
+    assert bundle["algorithm"] == result["champion"].algorithm
+    assert bundle["model_version_id"] == result["champion"].model_version_id
+    champion = load_champion(uri, supabase)
+    again, base = shap_by_feature(champion, inputs.X, inputs.X, bundle["explainer"], bundle["owners"])
+    expected = result["explanation"].shap.drop(columns="entry_id")
+    np.testing.assert_allclose(again.to_numpy(), expected.to_numpy(), atol=1e-8)
+    assert base == pytest.approx(bundle["base_value"])
 
 
 def test_it_never_promotes_or_writes_other_tables(uri, parent, supabase, inputs, tmp_path):  # noqa: F811
