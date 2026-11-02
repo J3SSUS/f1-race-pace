@@ -479,7 +479,7 @@ def run_explain(
     Supabase, the charts are drawn into a temporary folder and only then copied to `charts_dir` with `explain.json`
     and logged as artifacts. A Supabase failure leaves `charts_dir` untouched and the run FAILED. It can run any
     number of times (upsert plus overwritten files) and never promotes: no alias, no `champion_history`, `metrics`
-    or `predictions`. Returns `{"run_id", "explanation", "files", "shap_rows"}`.
+    or `predictions`. Returns `{"run_id", "champion", "explanation", "files", "shap_rows"}`.
     """
     config = config or load_config()
     uri = resolve_tracking_uri(tracking_uri)
@@ -543,4 +543,10 @@ def run_explain(
         mlflow.log_metrics(metrics)
         for path in files:
             mlflow.log_artifact(str(path))
-    return {"run_id": run.info.run_id, "explanation": explanation, "files": files, "shap_rows": n_rows}
+    return {
+        "run_id": run.info.run_id,
+        "champion": champion,
+        "explanation": explanation,
+        "files": files,
+        "shap_rows": n_rows,
+    }
