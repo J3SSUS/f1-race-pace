@@ -17,6 +17,8 @@ from training.data import TrainSet
 from training.explain import linear_coefficients, load_champion, run_explain, shap_by_feature
 from training.registry import REGISTERED_MODEL
 
+pytestmark = pytest.mark.slow  # logs real models in a local MLflow store: needs --runslow
+
 FEATURES = [f.name for f in load_catalog().features]
 N = 30
 EXPECTED_TREE = {

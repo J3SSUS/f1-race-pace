@@ -98,6 +98,7 @@ def test_explainer_kind_refuses_an_unknown_algorithm():
         explainer_kind("mystery")
 
 
+@pytest.mark.slow  # logs a real model in a local MLflow store: needs --runslow
 @pytest.mark.parametrize("name", list(ALGORITHMS))
 def test_the_champion_of_each_algorithm_loads(uri, parent, supabase, name):
     version = log_version(uri, parent, supabase, name)
@@ -112,6 +113,7 @@ def test_the_champion_of_each_algorithm_loads(uri, parent, supabase, name):
     assert len(champion.model.predict(X)) == 5
 
 
+@pytest.mark.slow  # logs a real model in a local MLflow store: needs --runslow
 def test_the_champion_is_the_version_holding_the_alias(uri, parent, supabase):
     first = log_version(uri, parent, supabase, "ridge")
     second = log_version(uri, parent, supabase, "elasticnet")
@@ -121,6 +123,7 @@ def test_the_champion_is_the_version_holding_the_alias(uri, parent, supabase):
     assert load_champion(uri, supabase).model_version_id == second.model_version_id
 
 
+@pytest.mark.slow  # logs a real model in a local MLflow store: needs --runslow
 def test_the_model_is_loaded_through_runs(uri, parent, supabase, monkeypatch):
     version = log_version(uri, parent, supabase, "ridge")
     promote(uri, version)
@@ -131,18 +134,21 @@ def test_the_model_is_loaded_through_runs(uri, parent, supabase, monkeypatch):
     assert loaded == [f"runs:/{version.mlflow_run_id}/model"]
 
 
+@pytest.mark.slow  # logs a real model in a local MLflow store: needs --runslow
 def test_no_alias_raises_a_clear_error(uri, parent, supabase):
     log_version(uri, parent, supabase, "ridge")
     with pytest.raises(ValueError, match="no 'champion' alias"):
         load_champion(uri, supabase)
 
 
+@pytest.mark.slow  # logs a real model in a local MLflow store: needs --runslow
 def test_a_baseline_champion_raises_and_names_the_algorithm(uri, parent, supabase):
     promote(uri, log_version(uri, parent, supabase, "baseline"))
     with pytest.raises(ValueError, match="baseline"):
         load_champion(uri, supabase)
 
 
+@pytest.mark.slow  # logs a real model in a local MLflow store: needs --runslow
 def test_an_algorithm_outside_the_explainers_raises_before_any_model_is_loaded(uri, parent, supabase, monkeypatch):
     version = log_version(uri, parent, supabase, "ridge")
     promote(uri, version)
@@ -156,6 +162,7 @@ def test_an_algorithm_outside_the_explainers_raises_before_any_model_is_loaded(u
         load_champion(uri, supabase)
 
 
+@pytest.mark.slow  # logs a real model in a local MLflow store: needs --runslow
 def test_a_champion_without_a_model_versions_row_raises(uri, parent, supabase):
     promote(uri, log_version(uri, parent, supabase, "ridge"))
     supabase.tables["model_versions"].clear()
