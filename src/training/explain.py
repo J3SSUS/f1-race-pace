@@ -6,8 +6,12 @@ The explainer is picked by the champion's algorithm (`EXPLAINERS`): `LinearExpla
 Explaining never promotes: it sets no alias and writes no `champion_history`, `metrics` or `predictions`.
 """
 
+import json
+import shutil
+import tempfile
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 
 import mlflow
@@ -20,11 +24,12 @@ from mlflow.exceptions import MlflowException
 from sklearn.inspection import permutation_importance
 from sklearn.pipeline import Pipeline
 
-from common.config import load_config
+from common.config import TrainingConfig, load_config
 from common.supabase_io import get_client, upsert_rows
 from features.catalog import load_catalog
 from features.store import StoreError, read_table, read_wide
-from training.data import NOT_FEATURES, TARGET, TrainSet
+from training import explain_charts as charts
+from training.data import NOT_FEATURES, TARGET, TrainSet, load_train
 from training.registry import REGISTERED_MODEL
 from training.sampling import SAMPLING_TAG, read_split, resolve_tracking_uri
 
@@ -368,3 +373,174 @@ def build_cases(
             )
         )
     return cases
+
+
+EXPLAIN = "explain"  # run name of the step
+
+
+@dataclass(frozen=True)
+class Explanation:
+    shap: pd.DataFrame  # entry_id + the 15 features; valid rows of train and test
+    base_value: float
+    importance: pd.DataFrame  # feature, mae_increase_mean, mae_increase_std; largest first
+    coefficients: dict[str, float] | None  # linear champions only, by preprocessed column
+    calibration: dict[str, float]  # Mincer-Zarnowitz on the OOF: slope, intercept, n_rows, n_races
+    cases: list[Case]  # two, in the order fastest, slowest
+
+
+def linear_coefficients(champion: Champion) -> dict[str, float] | None:
+    """The coefficient of each preprocessed column of a linear champion; `None` for a tree champion.
+
+    The numeric columns are standardized by the pipeline and keep their feature name; the one-hot columns of a
+    categorical feature are named `<feature>_<category>` and kept apart.
+    """
+    if explainer_kind(champion.algorithm) != "linear":
+        return None
+    prep, estimator = champion.model.named_steps["prep"], champion.model.named_steps["model"]
+    owners = _feature_of_each_column(prep)
+    names = []
+    for index, owner in enumerate(owners):
+        if owner in prep.named_transformers_ and owner != "numeric":
+            transformer = prep.named_transformers_[owner]
+            encoder = transformer[-1] if isinstance(transformer, Pipeline) else transformer
+            start = prep.output_indices_[owner].start
+            names.append(f"{owner}_{encoder.categories_[0][index - start]}")
+        else:
+            names.append(owner)
+    coefficients = np.ravel(estimator.coef_)
+    if len(coefficients) != len(names):
+        raise ValueError(f"the model has {len(coefficients)} coefficients for {len(names)} preprocessed columns")
+    return dict(zip(names, (float(c) for c in coefficients), strict=True))
+
+
+def load_champion_oof(champion: Champion, tracking_uri: str | None = None) -> pd.DataFrame:
+    """The `oof_predictions.parquet` of the champion's own training run (nothing is refitted)."""
+    client = MlflowClient(resolve_tracking_uri(tracking_uri))
+    try:
+        path = client.download_artifacts(champion.mlflow_run_id, "oof_predictions.parquet")
+    except MlflowException as exc:
+        raise ValueError(f"the champion's run {champion.mlflow_run_id} has no oof_predictions.parquet") from exc
+    return pd.read_parquet(path)
+
+
+def _draw_all(explanation: Explanation, X: pd.DataFrame, oof: pd.DataFrame, version: int, folder: Path) -> list[Path]:
+    """Draw every `.svg` chart into `folder` and return the paths (no coefficients chart for a tree champion)."""
+    shap_only = explanation.shap.drop(columns="entry_id")
+    fastest, slowest = explanation.cases
+    drawn = [
+        charts.coefficients_chart(explanation.coefficients, version, folder / "coefficients.svg"),
+        charts.permutation_chart(explanation.importance, version, folder / "permutation_importance.svg"),
+        charts.shap_summary_chart(shap_only, X, version, folder / "shap_summary.svg"),
+        charts.shap_bar_chart(shap_only, version, folder / "shap_bar.svg"),
+        charts.waterfall_chart(fastest, version, folder / "case_fastest.svg"),
+        charts.waterfall_chart(slowest, version, folder / "case_slowest.svg"),
+        charts.predicted_vs_actual_chart(oof, explanation.calibration, version, folder / "predicted_vs_actual.svg"),
+        charts.residuals_chart(oof, version, folder / "residuals.svg"),
+    ]
+    return [path for path in drawn if path is not None]
+
+
+def _explain_json(champion: Champion, explanation: Explanation, explainer: str, run_id: str, now: datetime) -> dict:
+    shap_only = explanation.shap.drop(columns="entry_id")
+    return {
+        "run_id": run_id,
+        "sampling_run_id": champion.sampling_run_id,
+        "model_version_id": champion.model_version_id,
+        "mlflow_version": champion.mlflow_version,
+        "algorithm": champion.algorithm,
+        "explainer": explainer,
+        "generated_at": now.isoformat(),
+        "base_value": explanation.base_value,
+        "importance": explanation.importance.to_dict("records"),
+        "mean_abs_shap": {name: float(v) for name, v in shap_only.abs().mean().items()},
+        "coefficients": explanation.coefficients,
+        "calibration": explanation.calibration,
+        "cases": [asdict(case) for case in explanation.cases],
+    }
+
+
+def run_explain(
+    config: TrainingConfig | None = None,
+    client=None,
+    tracking_uri: str | None = None,
+    charts_dir: Path = CHARTS_DIR,
+    *,
+    version: str = "v1",
+    now: datetime | None = None,
+    rows_loader: Callable = load_explain_rows,
+    train_loader: Callable = load_train,
+    oof_loader: Callable = load_champion_oof,
+    actuals_reader: Callable = read_actuals,
+) -> dict:
+    """The `explain` step: explain the champion and publish the result.
+
+    Everything that can fail without writing runs first (champion, rows, OOF, SHAP, importance, calibration, cases).
+    Then an `explain` root run opens in the sampling run's experiment and, inside it, the SHAP rows are upserted into
+    Supabase, the charts are drawn into a temporary folder and only then copied to `charts_dir` with `explain.json`
+    and logged as artifacts. A Supabase failure leaves `charts_dir` untouched and the run FAILED. It can run any
+    number of times (upsert plus overwritten files) and never promotes: no alias, no `champion_history`, `metrics`
+    or `predictions`. Returns `{"run_id", "explanation", "files", "shap_rows"}`.
+    """
+    config = config or load_config()
+    uri = resolve_tracking_uri(tracking_uri)
+    client = client if client is not None else get_client()
+    now = now or datetime.now(UTC)
+    seed = config.optuna.seed
+
+    champion = load_champion(uri, client)
+    explainer = explainer_kind(champion.algorithm)
+    X, meta = rows_loader(champion.sampling_run_id, client, version=version, tracking_uri=uri)
+    train = train_loader(champion.sampling_run_id, client, version=version, tracking_uri=uri)
+    oof = oof_loader(champion, uri)
+
+    background = X[(meta["split"] == "train").to_numpy()]
+    values, base_value = shap_by_feature(champion, X, background)
+    importance = permutation_importance_mae(champion, train, seed=seed)
+    calibration = calibration_line(oof)
+    cases = build_cases(champion, X, meta, values, base_value, client, version=version, reader=actuals_reader)
+    explanation = Explanation(
+        shap=values.assign(entry_id=meta["entry_id"].astype(int))[["entry_id", *values.columns]],
+        base_value=base_value,
+        importance=importance,
+        coefficients=linear_coefficients(champion),
+        calibration=calibration,
+        cases=cases,
+    )
+
+    ml = MlflowClient(uri)
+    experiment_id = ml.get_run(champion.sampling_run_id).info.experiment_id
+    mlflow.set_tracking_uri(uri)
+    tags = {
+        "step": EXPLAIN,
+        SAMPLING_TAG: champion.sampling_run_id,
+        "model_version_id": str(champion.model_version_id),
+        "algorithm": champion.algorithm,
+    }
+    with mlflow.start_run(run_name=EXPLAIN, experiment_id=experiment_id, tags=tags) as run:
+        n_rows = upsert_shap_values(client, champion, meta, values)  # Supabase first: a failure writes no file
+
+        with tempfile.TemporaryDirectory() as folder:
+            drawn = _draw_all(explanation, X, oof, champion.model_version_id, Path(folder))
+            report = Path(folder) / "explain.json"
+            report.write_text(
+                json.dumps(_explain_json(champion, explanation, explainer, run.info.run_id, now), indent=2)
+            )
+            charts_dir = Path(charts_dir)
+            charts_dir.mkdir(parents=True, exist_ok=True)
+            files = [Path(shutil.copy2(path, charts_dir / path.name)) for path in [*drawn, report]]
+
+        mlflow.log_params(
+            {"explainer": explainer, "n_repeats": N_REPEATS, "seed": seed, "background_rows": len(background)}
+        )
+        metrics = {"calibration_slope": calibration["slope"], "calibration_intercept": calibration["intercept"]}
+        for row in importance.itertuples():
+            metrics[f"perm_{row.feature}"] = float(row.mae_increase_mean)
+        for name, value in values.abs().mean().items():
+            metrics[f"mean_abs_shap_{name}"] = float(value)
+        for case in cases:
+            metrics[f"case_{case.label}_prediction"] = case.prediction
+            metrics[f"case_{case.label}_actual"] = case.actual
+        mlflow.log_metrics(metrics)
+        for path in files:
+            mlflow.log_artifact(str(path))
+    return {"run_id": run.info.run_id, "explanation": explanation, "files": files, "shap_rows": n_rows}
