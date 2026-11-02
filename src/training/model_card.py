@@ -282,3 +282,35 @@ def segment_errors(oof: pd.DataFrame, baseline_oof: pd.DataFrame, segments: pd.D
             )
         result.extend(sorted(rows, key=lambda r: (-r.mae, r.segment_value)))
     return result
+
+
+def read_notes(path: Path = NOTES_FILE) -> dict[str, str]:
+    """The three hand-written sections of the notes file, by H2 heading, as written (only the blank lines around trim).
+
+    Text before the first H2 (the header comment) and sections other than `NOTE_SECTIONS` are ignored. A missing file,
+    a missing or repeated section or an empty one raises a `ValueError` that names it, so the card never goes out with
+    a hole.
+    """
+    try:
+        lines = Path(path).read_text().splitlines()
+    except FileNotFoundError:
+        raise ValueError(f"the notes file {path} does not exist") from None
+    sections: dict[str, list[str]] = {}
+    current = None
+    for line in lines:
+        if line.startswith("## "):
+            current = line[3:].strip()
+            if current in NOTE_SECTIONS and current in sections:
+                raise ValueError(f"the notes file {path} has the section '{current}' twice")
+            sections.setdefault(current, [])
+        elif current is not None:
+            sections[current].append(line)
+    notes = {}
+    for name in NOTE_SECTIONS:
+        if name not in sections:
+            raise ValueError(f"the notes file {path} has no '## {name}' section")
+        text = "\n".join(sections[name]).strip("\n")
+        if not text.strip():
+            raise ValueError(f"the section '{name}' of the notes file {path} is empty")
+        notes[name] = text
+    return notes
