@@ -24,6 +24,7 @@ from training.explain import ALIAS
 from training.pipelines import ALGORITHMS
 from training.registry import REGISTERED_MODEL
 from training.sampling import SAMPLING_TAG, read_split, resolve_tracking_uri
+from training.selection import BASELINE
 from training.step import finished_run_id
 
 CARD_FILE = Path("MODEL_CARD.md")  # repository root
@@ -571,3 +572,71 @@ def render_card(
     )
     text = environment.get_template(Path(template).name).render(_card_context(inputs, errors, notes, generated))
     return re.sub(r"\n{3,}", "\n\n", text)
+
+
+CHARTS_DIR = Path("site/charts")  # the explain step's output folder, relative to the repository root
+CHART_LINK = re.compile(rf"\]\({re.escape(CHART_DIR)}/([^)]+)\)")
+
+
+def _oof_of(ml: MlflowClient, run_id: str, what: str) -> pd.DataFrame:
+    try:
+        return pd.read_parquet(ml.download_artifacts(run_id, "oof_predictions.parquet"))
+    except MlflowException as exc:
+        raise ValueError(f"the {what} run {run_id} has no oof_predictions.parquet") from exc
+
+
+def load_segment_oof(inputs: CardInputs, tracking_uri: str | None = None) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """The out-of-fold predictions of the champion's training run and of the baseline of the same sampling run."""
+    ml = MlflowClient(resolve_tracking_uri(tracking_uri))
+    champion_run = ml.get_model_version(REGISTERED_MODEL, inputs.mlflow_version).tags.get("mlflow_run_id", "")
+    baseline_run = finished_run_id(inputs.sampling_run_id, BASELINE, tracking_uri)
+    if not champion_run:
+        raise ValueError(f"version {inputs.mlflow_version} of {REGISTERED_MODEL} has no mlflow_run_id tag")
+    if baseline_run is None:
+        raise ValueError(f"no finished run of {BASELINE} for the sampling run {inputs.sampling_run_id}")
+    return _oof_of(ml, champion_run, "champion's training"), _oof_of(ml, baseline_run, BASELINE)
+
+
+def check_charts(inputs: CardInputs, charts_dir: Path) -> None:
+    """The `explain.json` of `charts_dir` must be from the `explain` run the card used."""
+    report = Path(charts_dir) / "explain.json"
+    if not report.exists():
+        raise ValueError(f"{report} does not exist: run scripts/explain.py")
+    found = json.loads(report.read_text()).get("run_id")
+    if found != inputs.explain_run_id:
+        raise ValueError(
+            f"{report} belongs to the explain run {found}, not to {inputs.explain_run_id} that the card used: "
+            "run scripts/explain.py again"
+        )
+
+
+def write_model_card(
+    config: TrainingConfig | None = None,
+    client=None,
+    tracking_uri: str | None = None,
+    path: Path = CARD_FILE,
+    *,
+    template: Path = TEMPLATE_FILE,
+    notes_path: Path = NOTES_FILE,
+    charts_dir: Path = CHARTS_DIR,
+    now: datetime | None = None,
+) -> dict:
+    """Write `MODEL_CARD.md` for the current champion, and nothing else.
+
+    Everything that can fail runs first (stored results, notes, the charts of `charts_dir`, the out-of-fold
+    predictions, the Supabase mapping, the render, the chart files the card links); the file is written last, so a
+    failure leaves no file. Returns `{"path", "inputs", "errors", "text"}`.
+    """
+    config = config or load_config()
+    client = client if client is not None else get_client()
+    inputs = load_card_inputs(config, client, tracking_uri)
+    notes = read_notes(notes_path)
+    check_charts(inputs, charts_dir)
+    oof, baseline_oof = load_segment_oof(inputs, tracking_uri)
+    errors = segment_errors(oof, baseline_oof, read_entry_segments(client))
+    text = render_card(inputs, errors, notes, template, now)
+    missing = sorted({name for name in CHART_LINK.findall(text) if not (Path(charts_dir) / name).exists()})
+    if missing:
+        raise ValueError(f"the card links charts that are not in {charts_dir}: {', '.join(missing)}")
+    Path(path).write_text(text)
+    return {"path": Path(path), "inputs": inputs, "errors": errors, "text": text}
