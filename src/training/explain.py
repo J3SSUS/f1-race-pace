@@ -21,7 +21,7 @@ from sklearn.inspection import permutation_importance
 from sklearn.pipeline import Pipeline
 
 from common.config import load_config
-from common.supabase_io import get_client
+from common.supabase_io import get_client, upsert_rows
 from features.catalog import load_catalog
 from features.store import StoreError, read_table, read_wide
 from training.data import NOT_FEATURES, TARGET, TrainSet
@@ -271,6 +271,41 @@ def read_actuals(client, entry_ids: list[int], version: str = "v1") -> dict[int,
     if missing:
         raise ValueError(f"no {TARGET} for entries {missing}: they do not exist in ground_truth or have no value")
     return {e: float(found[e]) for e in wanted}
+
+
+def shap_rows(
+    shap_values: pd.DataFrame, meta: pd.DataFrame, feature_ids: dict[str, int], model_version_id: int
+) -> list[dict]:
+    """One `shap_values` row per entry and feature, in the order of the rows and then of the columns.
+
+    `shap_values` and `meta` share the same index (see `load_explain_rows` and `shap_by_feature`). Every column of
+    `shap_values` must be in `feature_ids` and every value must be finite (the column is NOT NULL): otherwise it
+    raises, so nothing is written.
+    """
+    missing = [name for name in shap_values.columns if name not in feature_ids]
+    if missing:
+        raise ValueError(f"features {missing} are not in the features table: load the feature set first")
+    values = shap_values.to_numpy("float64")
+    if not np.isfinite(values).all():
+        raise ValueError("shap_values has a value that is not finite")
+    entries = meta.loc[shap_values.index, "entry_id"].astype(int).tolist()
+    ids = [feature_ids[name] for name in shap_values.columns]
+    return [
+        {"entry_id": entry, "model_version_id": model_version_id, "feature_id": feature, "shap_value": float(value)}
+        for entry, row in zip(entries, values, strict=True)
+        for feature, value in zip(ids, row, strict=True)
+    ]
+
+
+def upsert_shap_values(client, champion: Champion, meta: pd.DataFrame, shap_values: pd.DataFrame) -> int:
+    """Upsert the SHAP values of the champion on `entry_id,model_version_id,feature_id`; returns the rows written.
+
+    The `feature_id`s are read from `features` and the rows are built before the first write, so a missing feature
+    raises with nothing stored. Running it again with the same values leaves the same rows. It touches no other table.
+    """
+    feature_ids = {r["name"]: r["feature_id"] for r in read_table(client, "features", "feature_id,name")}
+    rows = shap_rows(shap_values, meta, feature_ids, champion.model_version_id)
+    return len(upsert_rows(client, "shap_values", rows, "entry_id,model_version_id,feature_id"))
 
 
 ADDITIVITY_TOLERANCE = 1e-4  # a case whose contributions miss its prediction by more than this is a bug, not a case
