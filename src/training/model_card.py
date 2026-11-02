@@ -363,12 +363,29 @@ def _chart(name: str, alt: str) -> dict[str, str]:
     return {"alt": alt, "path": f"{CHART_DIR}/{name}"}
 
 
+def _rounded(value: float) -> float:
+    """`value` rounded to three decimals, with a negative zero turned into zero (so it never prints as `-0.000`)."""
+    return round(value, 3) + 0.0
+
+
 def _n(value: float) -> str:
-    return f"{value:.3f}"
+    return f"{_rounded(value):.3f}"
 
 
 def _signed(value: float) -> str:
-    return f"{value:+.3f}"
+    return f"{_rounded(value):+.3f}"
+
+
+def _param(value: str) -> str:
+    """A stored param for display: a decimal number keeps four significant digits; integers and words stay as stored."""
+    try:
+        int(value)
+    except ValueError:
+        try:
+            return f"{float(value):.4g}"
+        except ValueError:
+            return value
+    return value
 
 
 def _interval(pair) -> str:
@@ -543,7 +560,7 @@ def _card_context(inputs: CardInputs, errors: list[SegmentError], notes: dict[st
         "cv_folds": inputs.cv_folds,
         "feature_set_version": inputs.feature_set_version,
         "trained_through": _race_name(inputs.trained_through),
-        "hyperparameters": [{"name": k, "value": v} for k, v in inputs.hyperparameters.items()],
+        "hyperparameters": [{"name": k, "value": _param(v)} for k, v in inputs.hyperparameters.items()],
         "tuning": inputs.tuning,
         "selection": _selection_context(inputs.selection),
     }

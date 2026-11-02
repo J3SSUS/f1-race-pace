@@ -7,8 +7,8 @@
 After Saturday qualifying, the model predicts the race pace of each driver for Sunday, `race_pace_delta_pct`: the median clean lap of the driver relative to the median clean lap of the field, in percent. A negative value means faster than the field and a positive one means slower.
 
 The model estimates, after Saturday qualifying, how much faster or slower each driver will be than the field on
-Sunday's clean laps. It is meant to read the order of the grid, not to name a winner or a podium: the ranking of
-drivers by predicted pace is more reliable than the size of any single prediction.
+Sunday's clean laps. It is meant to read the expected pace of each driver and the order of the grid, not to name a
+winner or a podium. The test result in part one shows how much it improves on the qualifying baseline, and where.
 
 It is a personal MLOps project that runs locally. It is not a betting tool and it is not tuned for one.
 
@@ -43,7 +43,7 @@ Importance describes how this model uses each feature, not how much the feature 
 | `fp_tyre_deg` | +0.000 ± 0.000 | 0.008 |
 | `air_temp` | +0.000 ± 0.000 | 0.009 |
 | `is_sprint_weekend` | +0.000 ± 0.000 | 0.003 |
-| `sprint_pace_delta_pct` | -0.000 ± 0.000 | 0.005 |
+| `sprint_pace_delta_pct` | +0.000 ± 0.000 | 0.005 |
 
 ![Permutation importance](site/charts/permutation_importance.svg)
 
@@ -111,7 +111,7 @@ COL, 2025 round 24. Prediction +0.869, actual +0.213, error +0.656 (prediction m
 
 ### Calibration
 
-On 851 out-of-fold rows of 46 races, the actual value is +0.020 + 1.074 × predicted (Mincer-Zarnowitz line). A slope of one and an intercept of zero would be a perfectly calibrated model.
+On 851 out-of-fold rows of 46 races, the actual value is +0.020 + 1.074 × predicted (Mincer-Zarnowitz line). A slope of one and an intercept of zero would be a perfectly calibrated model. These rows are fewer than the training races because the cross-validation always trains on the earliest races first, and only the races after that first window are ever predicted out of fold.
 
 ![Predicted against actual, out-of-fold](site/charts/predicted_vs_actual.svg)
 
@@ -152,8 +152,6 @@ These errors come from the out-of-fold predictions of cross-validation on the tr
 - Out-of-fold errors by team and by circuit type come from cross-validation on the training races, not from the test
   races or from a future season. Segments with few rows are marked, and no interval is computed for a segment, so
   small differences between close segments should not be read as real.
-- A team that changed its name across seasons appears under each name, so its rows are split and each part looks
-  smaller than the team really is. The card does not merge team lineages.
 - Importance and SHAP values describe what this model uses, not what matters in racing: correlated features share
   their importance, and a feature that looks unimportant can still matter in the world.
 - The two cases shown are the extremes of the prediction, the driver predicted fastest and the one predicted
@@ -180,7 +178,7 @@ later, in the walk-forward backtest over the 2026 season. Until then, treat pred
 
 - Algorithm: ridge.
 - Hyperparameters (best Optuna trial):
-  - `alpha`: 98.47432599131227
+  - `alpha`: 98.47
   - `imputation`: median
 - Tuning budget: 50 trials, seed 42, 5 folds.
 

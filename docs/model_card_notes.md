@@ -7,8 +7,8 @@ retraining, and the card prints its own numbers from the stored results.
 ## Intended use
 
 The model estimates, after Saturday qualifying, how much faster or slower each driver will be than the field on
-Sunday's clean laps. It is meant to read the order of the grid, not to name a winner or a podium: the ranking of
-drivers by predicted pace is more reliable than the size of any single prediction.
+Sunday's clean laps. It is meant to read the expected pace of each driver and the order of the grid, not to name a
+winner or a podium. The test result in part one shows how much it improves on the qualifying baseline, and where.
 
 It is a personal MLOps project that runs locally. It is not a betting tool and it is not tuned for one.
 
@@ -20,8 +20,6 @@ It is a personal MLOps project that runs locally. It is not a betting tool and i
 - Out-of-fold errors by team and by circuit type come from cross-validation on the training races, not from the test
   races or from a future season. Segments with few rows are marked, and no interval is computed for a segment, so
   small differences between close segments should not be read as real.
-- A team that changed its name across seasons appears under each name, so its rows are split and each part looks
-  smaller than the team really is. The card does not merge team lineages.
 - Importance and SHAP values describe what this model uses, not what matters in racing: correlated features share
   their importance, and a feature that looks unimportant can still matter in the world.
 - The two cases shown are the extremes of the prediction, the driver predicted fastest and the one predicted

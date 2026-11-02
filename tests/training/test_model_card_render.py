@@ -154,9 +154,33 @@ def test_the_importance_table_has_the_numbers_of_the_inputs_largest_first():
 
 def test_every_hyperparameter_and_the_tuning_budget_appear():
     text = render()
-    assert "`alpha`: 3.2468" in text
+    assert "`alpha`: 3.247" in text
     assert "`imputation`: median" in text
     assert "50 trials, seed 42, 5 folds" in text
+
+
+def test_a_negative_zero_never_prints_as_minus_zero():
+    inputs = make_inputs()
+    inputs.explain["importance"][1]["mae_increase_mean"] = -0.0004
+    inputs.explain["importance"][1]["mae_increase_std"] = -0.0001
+    text = render(inputs)
+    assert "| `team_pace_last3` | +0.000 ± 0.000 |" in text
+    assert "-0.000" not in text
+
+
+def test_a_long_decimal_param_is_shown_with_four_significant_digits_and_the_rest_as_stored():
+    inputs = make_inputs()
+    inputs.hyperparameters.update({"alpha": "98.47432599131227", "n_estimators": "300", "learning_rate": "1e-05"})
+    text = render(inputs)
+    assert "`alpha`: 98.47\n" in text
+    assert "`n_estimators`: 300\n" in text
+    assert "`learning_rate`: 1e-05\n" in text
+    assert "`imputation`: median\n" in text
+    assert "98.4743" not in text
+
+
+def test_the_calibration_says_why_its_races_are_fewer_than_the_training_races():
+    assert "fewer than the training races" in render()
 
 
 def test_the_two_cases_show_prediction_actual_and_error_and_their_largest_contributions():
