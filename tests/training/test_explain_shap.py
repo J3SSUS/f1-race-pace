@@ -96,3 +96,13 @@ def test_an_algorithm_without_an_explainer_raises(X):
     champion = fitted_champion("ridge", X)
     with pytest.raises(ValueError, match="baseline"):
         shap_by_feature(Champion(1, "1", "run", "sampling", "baseline", champion.model), X, X)
+
+
+@pytest.mark.parametrize("name", ["ridge", "elasticnet"])
+def test_a_linear_background_of_more_than_100_rows_is_used_whole(name):
+    big = synthetic_X(300)  # shap's default masker would keep a random 100 of these
+    champion = fitted_champion(name, big)
+    values, base = shap_by_feature(champion, big.iloc[:10], big)
+    estimator = champion.model.named_steps["model"]
+    assert base == pytest.approx(estimator.intercept_ + estimator.coef_ @ _background_mean(champion, big))
+    np.testing.assert_allclose(base + values.sum(axis=1), champion.model.predict(big.iloc[:10]), atol=TOLERANCE)

@@ -148,7 +148,9 @@ def shap_by_feature(champion: Champion, X: pd.DataFrame, background: pd.DataFram
     owners = _feature_of_each_column(prep)
     matrix = _dense(prep.transform(X))
     if kind == "linear":
-        explainer = shap.LinearExplainer(estimator, _dense(prep.transform(background)))
+        reference = _dense(prep.transform(background))
+        # the default masker keeps a random 100 rows: ask for every row of the background
+        explainer = shap.LinearExplainer(estimator, shap.maskers.Independent(reference, max_samples=len(reference)))
     else:
         explainer = shap.TreeExplainer(estimator, feature_perturbation="tree_path_dependent")
     values = np.asarray(explainer.shap_values(matrix))
