@@ -1,6 +1,6 @@
 # SPEC 12 — The model card
 
-> **Status:** Approved
+> **Status:** Implemented
 > **Depends on:** SPEC 06 (sampling and split), SPEC 09 (model versions), SPEC 10 (the `evaluate` run and the first champion), SPEC 11 (the `explain` run, `explain.json` and the charts)
 > **Backlog:** Phase 5 of `docs/backlog.md`: "`MODEL_CARD.md`: what it predicts, what weighs most, a concrete case, where it fails, data/split/versions"; the `MODEL_CARD.md` template and notes file of Phase 7 are built here (the page and `publish` stay in Phase 7)
 > **Date:** 2026-11-02
