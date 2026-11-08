@@ -1,18 +1,13 @@
 """Small fitted models of the champion and the baseline, logged in a local MLflow store like `tests/training`."""
 
-import sys
-from pathlib import Path
+import mlflow
+from mlflow import MlflowClient
+from test_explain_champion import synthetic_X, synthetic_y
+from test_pipelines import fixed_params
 
-sys.path.append(str(Path(__file__).resolve().parents[1] / "training"))  # the helpers of the training tests
-
-import mlflow  # noqa: E402
-from mlflow import MlflowClient  # noqa: E402
-from test_explain_champion import synthetic_X, synthetic_y  # noqa: E402
-from test_pipelines import fixed_params  # noqa: E402
-
-from training.baseline import qualifying_baseline  # noqa: E402
-from training.pipelines import ALGORITHMS, build_pipeline  # noqa: E402
-from training.registry import REGISTERED_MODEL, register_version  # noqa: E402
+from training.baseline import qualifying_baseline
+from training.pipelines import ALGORITHMS, build_pipeline
+from training.registry import REGISTERED_MODEL, register_version
 
 CV = {"cv_mae_mean": 0.4, "cv_rmse_mean": 0.5, "cv_r2_mean": 0.1, "cv_pairwise_accuracy_mean": 0.6}
 

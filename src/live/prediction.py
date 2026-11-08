@@ -214,3 +214,31 @@ def build_race_features(
     except Exception as exc:
         raise PredictionError(f"the features of {label} could not be built ({type(exc).__name__}): {exc}") from None
     return RaceFeatures(ref, frame, sessions, filled)
+
+
+def predict_entries(models: Models, frame: pd.DataFrame) -> pd.DataFrame:
+    """One row per entry of `frame`: `driver`, `predicted_pace_delta_pct` and `baseline_pace_delta_pct`.
+
+    The champion gets the features of the catalog in catalog order (never the identification columns) and predicts
+    every entry, valid or not; its imputer handles a missing form feature. The baseline gets `quali_delta_pct` only
+    and is NaN where that is missing (it has no imputer: a number would be invented). A NaN champion prediction
+    raises `PredictionError`, because `predictions.predicted_pace_delta_pct` is `NOT NULL`. Nothing is written.
+    """
+    names = load_catalog().names
+    features = frame[names]
+    champion = pd.Series(models.champion.model.predict(features), index=frame.index, dtype="float64")
+    if champion.isna().any():
+        drivers = ", ".join(frame.loc[champion.isna(), "driver"])
+        raise PredictionError(f"the champion predicted NaN for {drivers}: nothing was written")
+
+    baseline = pd.Series(float("nan"), index=frame.index, dtype="float64")
+    has_quali = frame["quali_delta_pct"].notna()
+    if has_quali.any():
+        baseline[has_quali] = models.baseline.predict(frame.loc[has_quali, ["quali_delta_pct"]])
+    return pd.DataFrame(
+        {
+            "driver": frame["driver"].to_numpy(),
+            "predicted_pace_delta_pct": champion.to_numpy(),
+            "baseline_pace_delta_pct": baseline.to_numpy(),
+        }
+    )
