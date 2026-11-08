@@ -1,6 +1,6 @@
 # SPEC 13 — Ground truth script for one race
 
-> **Status:** Approved
+> **Status:** Implemented.
 > **Depends on:** SPEC 01 (raw session ingestion), SPEC 02 (reference data), SPEC 04 (target and features), SPEC 05 (feature store load)
 > **Backlog:** Phase 6 of `docs/backlog.md`, "Ground truth script": ingest the race with the shared `ingest_session`, compute the target with the Phase 3 function, insert `ground_truth`. The "recompute `metrics`" bullet moves to SPEC 15
 > **Date:** 2026-11-08
@@ -99,7 +99,7 @@ Each step leaves `uv run pytest tests` green and can be committed on its own. Th
 4. **Compute and write** (`write_ground_truth`). Check, with synthetic raw tables built by hand and a fake client: the rows equal the values of `race_target` and `ground_truth_rows`, one per entry; an invalid row has `actual_pace_delta_pct` NULL and `is_valid_row` false; a driver with no `race_entries` row raises before any write; `entries` and `valid_rows` of the result match; the upsert is one call with `on_conflict = entry_id` made after every row is built; a Supabase error raises `GroundTruthError` by type, without the body or the key; running twice gives the same rows and only `dag_run_id` changes; no other table is written.
 5. **The CLI** (`scripts/ground_truth.py`). Check, with a fake client: both arguments are required; it prints the `run_id`, the state of each session and the entries and valid rows; each failure of steps 2 to 4 prints one `STOPPED:` line and exits with code 1; the output never contains the service key.
 6. **Real run.** The user runs it when no OpenF1 session is live (OpenF1 blocks unauthenticated access from 30 minutes before a session until 30 minutes after it ends); if it is blocked, the script stops with its `STOPPED:` line, writes nothing and the run is repeated later. First I read from Supabase the stored `ground_truth` of 2026 round 17. Then the user runs `! uv run python scripts/ground_truth.py --year 2026 --round <R>` for the first 2026 round after 17 that is not in `ground_truth` (if it has no `races` row yet, the script stops and `scripts/load_reference.py` goes first), and again for round 17. Check together: the new race has one row per entry with the expected valid rows; round 17 reproduces every stored value (`actual_pace_delta_pct`, `clean_laps`, `is_valid_row`); a second run of the new race changes no value; the count of rows of the other races is unchanged. Record the `run_id`s, the round and the counts in `DECISIONS.md`.
-7. **Slow tests and cleanup.** Mark `slow` the new tests that need more than the project's threshold, as measured with `--durations`. In `docs/backlog.md`, with the user's agreement, tick the two bullets of "Ground truth script" that this spec covers (ingest and compute, insert `ground_truth`) and leave "recompute `metrics`" open for SPEC 15. Run `ruff check`, `ruff format --check`, `pytest` and `pytest --runslow`.
+7. **Slow tests and cleanup.** Mark `slow` the new tests that need more than the project's threshold, as measured with `--durations`. In `docs/backlog.md`, with the user's agreement, tick the two bullets of "Ground truth script" that this spec covers (ingest and compute, insert `ground_truth`) and leave "recompute `metrics`" open for SPEC 15. Run `ruff check src scripts tests`, `ruff format --check src scripts tests`, `pytest` and `pytest --runslow`.
 
 ---
 
@@ -120,7 +120,7 @@ Each step leaves `uv run pytest tests` green and can be committed on its own. Th
 - [ ] `DECISIONS.md` has the lines of step 1 and the one of the real run.
 - [ ] The real run, when no OpenF1 session is live, writes the ground truth of the first 2026 round after 17 that had none, and reruns round 17 reproducing every stored `actual_pace_delta_pct`, `clean_laps` and `is_valid_row`; a second run of the new race changes no value and no row of another race changes. If a live session blocks it, it is postponed and this item stays open.
 - [ ] `docs/backlog.md` ticks "ingest and compute" and "insert `ground_truth`" of the ground truth script with the user's agreement, and leaves "recompute `metrics`" open for SPEC 15.
-- [ ] `uv run ruff check`, `uv run ruff format --check`, `uv run pytest tests` and `uv run pytest tests --runslow` pass.
+- [ ] `uv run ruff check src scripts tests`, `uv run ruff format --check src scripts tests`, `uv run pytest tests` and `uv run pytest tests --runslow` pass. (The exploratory notebook is out of this check: it already failed `ruff check` before this spec.)
 
 ---
 
