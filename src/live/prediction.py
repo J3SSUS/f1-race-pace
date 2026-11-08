@@ -6,10 +6,14 @@ earlier races without ground truth are filled in with `write_ground_truth`, and 
 row. A race already predicted by the champion's version is never overwritten.
 """
 
+import time
+from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 
 import mlflow
 import mlflow.sklearn
+import pandas as pd
 from mlflow import MlflowClient
 from mlflow.exceptions import MlflowException
 from sklearn.pipeline import Pipeline
@@ -17,6 +21,9 @@ from sklearn.pipeline import Pipeline
 from common.supabase_io import get_client
 from features.catalog import load_catalog
 from features.store import StoreError, read_table
+from ingestion.schedule import expected_sessions
+from ingestion.session import RAW_DIR, Loader
+from live.sessions import ingest_checked
 from training.explain import ALIAS, Champion, load_champion
 from training.registry import REGISTERED_MODEL, feature_set_id_of
 from training.sampling import SAMPLING_TAG, resolve_tracking_uri
@@ -94,3 +101,40 @@ def load_models(client=None, tracking_uri: str | None = None) -> Models:
     except Exception as exc:  # MLflow or Supabase down: the type only, never a body
         raise PredictionError(f"the models could not be loaded ({type(exc).__name__})") from None
     return Models(champion, baseline)
+
+
+def race_start(schedule: pd.DataFrame, year: int, round: int) -> pd.Timestamp:
+    """`session_date_utc` (timezone-aware UTC) of the `R` session of the event; `PredictionError` if it has none."""
+    race = schedule[(schedule["year"] == year) & (schedule["round"] == round) & (schedule["session"] == "R")]
+    if race.empty:
+        raise PredictionError(f"{year} round {round} has no R session in the OpenF1 schedule")
+    return pd.Timestamp(race["session_date_utc"].iloc[0])
+
+
+def ingest_extra_sessions(
+    schedule: pd.DataFrame,
+    year: int,
+    round: int,
+    *,
+    run_id: str,
+    raw_dir: Path = RAW_DIR,
+    loader: Loader | None = None,
+    sleep: Callable[[float], None] = time.sleep,
+) -> dict[str, str]:
+    """`FP2` and `S` with `ingest_session`, only when the schedule lists them for the event.
+
+    Each is `downloaded`, `skipped` (already on disk and valid) or `not in the event` (a sprint weekend has no
+    `FP2`, a normal one has no `S`). `R` is never requested. A session that is not published, is blocked by a live
+    session or is not valid raises `PredictionError` naming it.
+    """
+    listed = set(expected_sessions(schedule, year, round))
+    return {
+        session: (
+            ingest_checked(
+                year, round, session, run_id=run_id, raw_dir=raw_dir, loader=loader, sleep=sleep, error=PredictionError
+            )
+            if session in listed
+            else "not in the event"
+        )
+        for session in EXTRA_SESSIONS
+    }

@@ -14,8 +14,8 @@ from common.supabase_io import get_client, upsert_rows
 from features.race_info import RaceInfo
 from features.store import LOAD_REFERENCE, RaceRef, ground_truth_rows, read_table
 from features.target import race_target
-from ingestion.openf1_client import SessionNotAvailable
-from ingestion.session import RAW_DIR, Loader, ingest_session, read_meta
+from ingestion.session import RAW_DIR, Loader
+from live.sessions import ingest_checked
 
 SESSIONS = ("Q", "R")  # qualifying defines the entries and the valid-row rule; the race gives the target
 
@@ -59,44 +59,6 @@ def read_race_ref(client, year: int, round: int) -> RaceRef:
     return RaceRef(RaceInfo(year, round, circuit["name"], circuit["circuit_type"]), entry_ids)
 
 
-def _ingest_one(
-    year: int, round: int, session: str, *, run_id: str, raw_dir: Path, loader: Loader | None, sleep: Callable
-) -> str:
-    """`downloaded` or `skipped` for one session; raises `GroundTruthError` naming it if it cannot be used."""
-    label = f"session {session} of {year} round {round}"
-    base = loader
-    if base is None:
-        from ingestion.openf1_loader import load_session_tables as base  # the default of `ingest_session`
-
-    blocked = False
-
-    def watching(y: int, r: int, s: str):
-        nonlocal blocked
-        try:
-            return base(y, r, s)
-        except SessionNotAvailable:  # `ingest_session` turns every error into `failed`: keep the cause
-            blocked = True
-            raise
-
-    result = ingest_session(year, round, session, run_id=run_id, loader=watching, raw_dir=raw_dir, sleep=sleep)
-    if result.status == "failed":
-        if blocked:
-            raise GroundTruthError(
-                f"{label} is blocked by OpenF1: a session is live (access is restricted from 30 minutes before "
-                "a session until 30 minutes after it ends); retry 30 minutes after it ends"
-            )
-        raise GroundTruthError(
-            f"{label} is not available: OpenF1 has no published data for it yet, or the download failed; retry later"
-        )
-    if not result.valid:
-        errors = "; ".join((read_meta(result.path) or {}).get("errors", []))
-        raise GroundTruthError(
-            f"{label} is not valid: {errors}; download it again with "
-            f"scripts/ingest.py --from {year} --to {year} --round {round} --force"
-        )
-    return result.status
-
-
 def ingest_race_sessions(
     year: int,
     round: int,
@@ -112,7 +74,9 @@ def ingest_race_sessions(
     not valid, with a `GroundTruthError` that names it. It reads no table.
     """
     return {
-        session: _ingest_one(year, round, session, run_id=run_id, raw_dir=raw_dir, loader=loader, sleep=sleep)
+        session: ingest_checked(
+            year, round, session, run_id=run_id, raw_dir=raw_dir, loader=loader, sleep=sleep, error=GroundTruthError
+        )
         for session in SESSIONS
     }
 
