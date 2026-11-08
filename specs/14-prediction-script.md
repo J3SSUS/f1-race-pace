@@ -1,6 +1,6 @@
 # SPEC 14 — Prediction script for one race
 
-> **Status:** Approved
+> **Status:** Implemented
 > **Depends on:** SPEC 01 (raw session ingestion), SPEC 02 (reference data), SPEC 04 (target and features), SPEC 05 (feature store load), SPEC 09 (model versions), SPEC 10 (the first champion), SPEC 13 (ground truth script)
 > **Backlog:** Phase 6 of `docs/backlog.md`, "Prediction script": load the `champion` alias, ingest the race weekend with the shared `ingest_session`, run any missing earlier ground truth, build the features and insert them into `feature_values`, insert `prediction_runs` and `predictions` and mark `is_late`. The shadow model of the first bullet is left for Phase 9 (`DECISIONS.md`, 2026-11-08)
 > **Date:** 2026-11-08
@@ -146,28 +146,28 @@ Each step leaves `uv run pytest tests` green and can be committed on its own. Th
 
 ## Acceptance criteria
 
-- [ ] `missing_ground_truth` lists, in order, the earlier races that have an entry without a `ground_truth` row; a complete race, the same race and later races are not listed.
-- [ ] `read_history` returns exactly the columns of `HISTORY_COLUMNS` for the valid `ground_truth` rows (with a target) of the earlier races only, with the driver code, the team name and the circuit name.
-- [ ] `load_models` returns the champion of the `champion` alias and the baseline whose run has the champion's `sampling_run_id` (a baseline of another sampling run is never picked); no alias, no baseline for that sampling run and a champion whose feature set is not the catalog's each raise naming what is missing, and nothing is loaded before those checks pass.
-- [ ] After the move of `_ingest_one` to `ingest_checked`, the tests of SPEC 13 pass without any change.
-- [ ] `race_start` returns the `session_date_utc` of the `R` session of the schedule and raises if there is none.
-- [ ] `FP2` and `S` are ingested only when the schedule lists them and the others are reported as `not in the event`; an `FP2` or `S` that is not published, is blocked by a live session or is not valid raises naming the session.
-- [ ] The `R` session of the race being predicted is never ingested or read (a loader that logs its calls and the files read prove it).
-- [ ] The features of a synthetic race built from a history read from Supabase equal the ones built with the in-memory history of `build_race`.
-- [ ] Every earlier race without ground truth is filled in by `write_ground_truth`, in order, and listed in `ground_truth_filled`; if one fails, the script stops naming that race and nothing after it runs.
-- [ ] `predict_entries` gives one row per entry, valid or not, equal to what the champion's and the baseline's `predict` give on the features in catalog order; the baseline value is NaN where `quali_delta_pct` is NaN and the champion still predicts; a NaN champion prediction raises before any write.
-- [ ] A race that already has predictions of the champion's model version stops with `STOPPED:`, names when they were generated, and writes nothing, not even `feature_values`.
-- [ ] `feature_values` gets 15 rows per entry with `pipeline_run_id` equal to the `run_id`; running the writes again does not duplicate them.
-- [ ] One `prediction_runs` row per race and champion version is written, with `dag_run_id` equal to the `run_id`; `is_late` is true when `now` is after the start of the `R` session and false when it is before, and `generated_at` is that same `now` in `prediction_runs` and in every `predictions` row.
-- [ ] One `predictions` row per entry is written with the champion's `model_version_id`, a non-null `predicted_pace_delta_pct` and `baseline_pace_delta_pct` filled or NULL as above.
-- [ ] If any step before the inserts fails, nothing is written to `prediction_runs` or `predictions`; if the `predictions` insert fails after the `prediction_runs` one, the leftover run does not stop a rerun.
-- [ ] A Supabase error stops the script with `STOPPED:` and exit code 1, reported by type without the response body, the headers or the service key; the output never contains the key.
-- [ ] `scripts/predict.py` requires `--year` and `--round`, prints the run, the ground truth it filled in, the sessions, the `feature_values` count and the final line with the model version and whether it is late; each failure prints one `STOPPED:` line and exits with code 1.
-- [ ] It writes only `races`, `race_entries` and their reference tables (through `ensure_race_entries`), the `ground_truth` of earlier races (through `write_ground_truth`), `feature_values`, `prediction_runs` and `predictions`: no MLflow run, no `metrics` row, and the alias and `champion_history` are untouched.
-- [ ] `DECISIONS.md` has the lines of step 1 and the one of the real run.
-- [ ] The real run on 2026 round 17, when no OpenF1 session is live, recomputes features equal to the stored `feature_values`, writes 22 predictions of model version 4 marked late with the baseline column equal to the qualifying baseline's, and a second run stops with the guard and writes nothing. If a live session blocks it, it is postponed and this item stays open.
-- [ ] `docs/backlog.md` ticks the bullets of "Prediction script" that this spec covers with the user's agreement, and leaves the shadow part of the first bullet open for Phase 9.
-- [ ] `uv run ruff check src scripts tests`, `uv run ruff format --check src scripts tests`, `uv run pytest tests` and `uv run pytest tests --runslow` pass.
+- [x] `missing_ground_truth` lists, in order, the earlier races that have an entry without a `ground_truth` row; a complete race, the same race and later races are not listed.
+- [x] `read_history` returns exactly the columns of `HISTORY_COLUMNS` for the valid `ground_truth` rows (with a target) of the earlier races only, with the driver code, the team name and the circuit name.
+- [x] `load_models` returns the champion of the `champion` alias and the baseline whose run has the champion's `sampling_run_id` (a baseline of another sampling run is never picked); no alias, no baseline for that sampling run and a champion whose feature set is not the catalog's each raise naming what is missing, and nothing is loaded before those checks pass.
+- [x] After the move of `_ingest_one` to `ingest_checked`, the tests of SPEC 13 pass without any change.
+- [x] `race_start` returns the `session_date_utc` of the `R` session of the schedule and raises if there is none.
+- [x] `FP2` and `S` are ingested only when the schedule lists them and the others are reported as `not in the event`; an `FP2` or `S` that is not published, is blocked by a live session or is not valid raises naming the session.
+- [x] The `R` session of the race being predicted is never ingested or read (a loader that logs its calls and the files read prove it).
+- [x] The features of a synthetic race built from a history read from Supabase equal the ones built with the in-memory history of `build_race`.
+- [x] Every earlier race without ground truth is filled in by `write_ground_truth`, in order, and listed in `ground_truth_filled`; if one fails, the script stops naming that race and nothing after it runs.
+- [x] `predict_entries` gives one row per entry, valid or not, equal to what the champion's and the baseline's `predict` give on the features in catalog order; the baseline value is NaN where `quali_delta_pct` is NaN and the champion still predicts; a NaN champion prediction raises before any write.
+- [x] A race that already has predictions of the champion's model version stops with `STOPPED:`, names when they were generated, and writes nothing, not even `feature_values`.
+- [x] `feature_values` gets 15 rows per entry with `pipeline_run_id` equal to the `run_id`; running the writes again does not duplicate them.
+- [x] One `prediction_runs` row per race and champion version is written, with `dag_run_id` equal to the `run_id`; `is_late` is true when `now` is after the start of the `R` session and false when it is before, and `generated_at` is that same `now` in `prediction_runs` and in every `predictions` row.
+- [x] One `predictions` row per entry is written with the champion's `model_version_id`, a non-null `predicted_pace_delta_pct` and `baseline_pace_delta_pct` filled or NULL as above.
+- [x] If any step before the inserts fails, nothing is written to `prediction_runs` or `predictions`; if the `predictions` insert fails after the `prediction_runs` one, the leftover run does not stop a rerun.
+- [x] A Supabase error stops the script with `STOPPED:` and exit code 1, reported by type without the response body, the headers or the service key; the output never contains the key.
+- [x] `scripts/predict.py` requires `--year` and `--round`, prints the run, the ground truth it filled in, the sessions, the `feature_values` count and the final line with the model version and whether it is late; each failure prints one `STOPPED:` line and exits with code 1.
+- [x] It writes only `races`, `race_entries` and their reference tables (through `ensure_race_entries`), the `ground_truth` of earlier races (through `write_ground_truth`), `feature_values`, `prediction_runs` and `predictions`: no MLflow run, no `metrics` row, and the alias and `champion_history` are untouched.
+- [x] `DECISIONS.md` has the lines of step 1 and the one of the real run.
+- [x] The real run on 2026 round 17, when no OpenF1 session is live, recomputes features equal to the stored `feature_values`, writes 22 predictions of model version 4 marked late with the baseline column equal to the qualifying baseline's, and a second run stops with the guard and writes nothing. If a live session blocks it, it is postponed and this item stays open.
+- [x] `docs/backlog.md` ticks the bullets of "Prediction script" that this spec covers with the user's agreement, and leaves the shadow part of the first bullet open for Phase 9.
+- [x] `uv run ruff check src scripts tests`, `uv run ruff format --check src scripts tests`, `uv run pytest tests` and `uv run pytest tests --runslow` pass.
 
 ---
 
