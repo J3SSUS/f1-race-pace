@@ -3,12 +3,13 @@ from datetime import UTC, datetime
 import mlflow
 import pytest
 from fake_supabase import FakeSupabase
+from mlflow import MlflowClient
 from model_helpers import log_version, promote
 from test_explain_champion import synthetic_X
 from test_manifest import config, make_parts
 
 from features.catalog import load_catalog
-from live.prediction import Models, PredictionError, load_models
+from live.prediction import Models, PredictionError, find_baseline, load_models
 from training.sampling import register_run
 
 NOW = datetime(2026, 11, 1, 12, 0, tzinfo=UTC)
@@ -114,3 +115,22 @@ def test_the_newest_baseline_of_the_sampling_run_wins(uri, parent, supabase):
     finally:
         mlflow.sklearn.load_model = real
     assert loaded[-1] == f"runs:/{newest.mlflow_run_id}/model"
+
+
+def test_find_baseline_returns_the_newest_baseline_of_the_sampling_run(uri, parent, other_parent, supabase):
+    log_version(uri, parent, supabase, "ridge")
+    log_version(uri, parent, supabase, "baseline")
+    newest = log_version(uri, parent, supabase, "baseline")
+    log_version(uri, other_parent, supabase, "baseline")  # newer still, but of another sampling run
+
+    row = find_baseline(supabase, MlflowClient(uri), parent)
+
+    assert row["model_version_id"] == newest.model_version_id
+    assert row["mlflow_run_id"] == newest.mlflow_run_id
+
+
+def test_find_baseline_raises_naming_the_sampling_run_when_there_is_none(uri, parent, other_parent, supabase):
+    log_version(uri, parent, supabase, "ridge")
+    log_version(uri, other_parent, supabase, "baseline")
+    with pytest.raises(PredictionError, match=rf"no baseline.*sampling run {parent}"):
+        find_baseline(supabase, MlflowClient(uri), parent)
