@@ -1,8 +1,7 @@
-import json
-
 import pytest
 from fake_supabase import FakeSupabase
-from synthetic_race import DRIVERS, write_race
+from live_helpers import ENTRY, reference
+from synthetic_race import DRIVERS
 
 from features.race_info import RaceInfo
 from features.store import StoreError, ground_truth_rows
@@ -11,31 +10,10 @@ from live.ground_truth import GroundTruthError, GroundTruthResult, write_ground_
 
 FIELD_MEDIAN = 91.2  # the `clean` scenario of the synthetic race, derived by hand in `synthetic_race`
 VALID = {"AAA", "BBB", "CCC", "DDD", "EEE", "FFF"}  # HHH has 12 clean laps and GGG 8: below the 15 needed
-ENTRY = {d.code: 100 + d.number for d in DRIVERS}
 
 
 def run(raw_dir, client, **kw):
     return write_ground_truth(2024, 1, client=client, raw_dir=raw_dir, sleep=lambda s: None, **kw)
-
-
-@pytest.fixture
-def raw(tmp_path):
-    """The Q and R sessions of one synthetic race on disk, marked valid as `ingest_session` would."""
-    write_race(tmp_path, 2024, 1, "clean")
-    for session in ("Q", "R"):
-        meta_path = tmp_path / "2024" / "01" / session / "meta.json"
-        meta = json.loads(meta_path.read_text()) | {"valid": True, "errors": []}
-        meta_path.write_text(json.dumps(meta))
-    return tmp_path
-
-
-def reference() -> dict[str, list[dict]]:
-    return {
-        "circuits": [{"circuit_id": 1, "name": "Synthetic", "circuit_type": "permanent"}],
-        "drivers": [{"driver_id": d.number, "code": d.code} for d in DRIVERS],
-        "races": [{"race_id": 10, "year": 2024, "round": 1, "circuit_id": 1}],
-        "race_entries": [{"entry_id": ENTRY[d.code], "race_id": 10, "driver_id": d.number} for d in DRIVERS],
-    }
 
 
 def stored(client) -> dict[int, dict]:
