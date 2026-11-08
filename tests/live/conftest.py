@@ -14,3 +14,15 @@ def raw(tmp_path: Path) -> Path:
     """A raw folder with the synthetic race 2024 round 1 (Q and R, valid)."""
     write_valid_race(tmp_path)
     return tmp_path
+
+
+@pytest.fixture
+def uri(tmp_path: Path) -> str:
+    """A SQLite MLflow store in the temporary folder, with the experiment's artifacts there too."""
+    from mlflow import MlflowClient
+
+    from training.sampling import EXPERIMENT
+
+    store = f"sqlite:///{tmp_path / 'mlflow.db'}"
+    MlflowClient(store).create_experiment(EXPERIMENT, artifact_location=(tmp_path / "artifacts").as_uri())
+    return store
