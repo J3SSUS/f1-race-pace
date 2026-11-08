@@ -7,8 +7,10 @@ row. A race already predicted by the champion's version is never overwritten.
 """
 
 import time
+import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 
 import mlflow
@@ -19,10 +21,14 @@ from mlflow.exceptions import MlflowException
 from sklearn.pipeline import Pipeline
 
 from common.supabase_io import get_client
+from features import race_features
 from features.catalog import load_catalog
-from features.store import StoreError, read_table
+from features.store import RaceRef, StoreError, read_table
+from ingestion.reference import ReferenceDataError, ensure_race_entries
 from ingestion.schedule import expected_sessions
-from ingestion.session import RAW_DIR, Loader
+from ingestion.session import RAW_DIR, Loader, ingest_session
+from live.ground_truth import GroundTruthError, read_race_ref, write_ground_truth
+from live.history import missing_ground_truth, read_history
 from live.sessions import ingest_checked
 from training.explain import ALIAS, Champion, load_champion
 from training.registry import REGISTERED_MODEL, feature_set_id_of
@@ -138,3 +144,73 @@ def ingest_extra_sessions(
         )
         for session in EXTRA_SESSIONS
     }
+
+
+@dataclass(frozen=True)
+class RaceFeatures:
+    ref: RaceRef  # the race and the entry_id of each driver code
+    frame: pd.DataFrame  # `race_features`: identification columns and the features in catalog order
+    sessions: dict[str, str]  # "FP2" and "S" -> "downloaded" | "skipped" | "not in the event"
+    ground_truth_filled: list[tuple[int, int]]  # earlier races whose ground truth this call wrote
+
+
+def build_race_features(
+    year: int,
+    round: int,
+    schedule: pd.DataFrame,
+    *,
+    client,
+    raw_dir: Path = RAW_DIR,
+    loader: Loader | None = None,
+    run_id: str | None = None,
+    sleep: Callable[[float], None] = time.sleep,
+    check: Callable[[RaceRef], None] | None = None,
+) -> RaceFeatures:
+    """The Saturday features of one race, with everything they need on disk and in Supabase.
+
+    In this order: `Q` is ingested (so a blocked or invalid one is reported by name) and `ensure_race_entries`
+    creates the circuit, drivers, teams, race and entries; `check(ref)` runs, if given, as soon as the race exists
+    (the guard against predicting twice); `FP2` and `S` are ingested when the schedule lists them; the ground truth
+    of every earlier race that lacks it is written with `write_ground_truth`, in order, stopping with the race
+    named if one fails; the history is read from Supabase and `race_features` builds the features. `R` of this race
+    is never ingested or read. Raises `PredictionError`; writes only what those functions write.
+    """
+    run_id = run_id or uuid.uuid4().hex
+    label = f"{year} round {round}"
+    ingest_checked(year, round, "Q", run_id=run_id, raw_dir=raw_dir, loader=loader, sleep=sleep, error=PredictionError)
+    try:
+        ensure_race_entries(
+            year,
+            round,
+            client=client,
+            run_id=run_id,
+            schedule=schedule,
+            ingest=partial(ingest_session, loader=loader, sleep=sleep),
+            raw_dir=raw_dir,
+        )
+        ref = read_race_ref(client, year, round)
+    except (ReferenceDataError, GroundTruthError) as exc:
+        raise PredictionError(str(exc)) from None
+    if check is not None:
+        check(ref)
+
+    sessions = ingest_extra_sessions(schedule, year, round, run_id=run_id, raw_dir=raw_dir, loader=loader, sleep=sleep)
+
+    filled = []
+    for earlier_year, earlier_round in missing_ground_truth(client, year, round):
+        try:
+            write_ground_truth(
+                earlier_year, earlier_round, client=client, raw_dir=raw_dir, loader=loader, run_id=run_id, sleep=sleep
+            )
+        except (GroundTruthError, StoreError) as exc:
+            raise PredictionError(
+                f"the ground truth of {earlier_year} round {earlier_round} could not be filled in: {exc}"
+            ) from None
+        filled.append((earlier_year, earlier_round))
+
+    history = read_history(client, year, round)
+    try:
+        frame = race_features(ref.info, history, raw_dir)
+    except Exception as exc:
+        raise PredictionError(f"the features of {label} could not be built ({type(exc).__name__}): {exc}") from None
+    return RaceFeatures(ref, frame, sessions, filled)
