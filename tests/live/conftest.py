@@ -27,3 +27,34 @@ def uri(tmp_path: Path) -> str:
     store = f"sqlite:///{tmp_path / 'mlflow.db'}"
     MlflowClient(store).create_experiment(EXPERIMENT, artifact_location=(tmp_path / "artifacts").as_uri())
     return store
+
+
+@pytest.fixture
+def season_raw(tmp_path: Path) -> Path:
+    from season_helpers import write_season
+
+    write_season(tmp_path)
+    return tmp_path
+
+
+@pytest.fixture
+def season_schedule_frame():
+    from season_helpers import season_schedule
+
+    return season_schedule()
+
+
+@pytest.fixture
+def season_db(season_raw, season_schedule_frame):
+    from season_helpers import season_client
+
+    return season_client(season_raw, season_schedule_frame)
+
+
+@pytest.fixture
+def season_config(monkeypatch):
+    """The reference configuration of the synthetic season instead of `config/circuits.yml`."""
+    from season_helpers import CIRCUITS
+
+    monkeypatch.setattr("ingestion.reference.load_circuits", lambda: CIRCUITS)
+    monkeypatch.setattr("ingestion.reference.load_team_aliases", lambda: {})

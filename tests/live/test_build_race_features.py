@@ -1,78 +1,35 @@
-import json
-from pathlib import Path
-
 import pandas as pd
 import pytest
 from fake_supabase import FakeSupabase
-from synthetic_race import practice_tables, qualifying_tables, write_race, write_session
-from test_schedule import NORMAL, meeting, schedule_of
+from season_helpers import CIRCUITS, INFO
 from test_session import failing_loader, good_loader
 
 import live.prediction as prediction
 from features import build_race, race_features
 from features.form import HISTORY_COLUMNS, empty_history
-from features.race_info import RaceInfo
 from ingestion.openf1_client import SessionNotAvailable
-from ingestion.reference import ensure_race_entries
-from ingestion.reference_config import Circuit
-from ingestion.session import IngestResult
 from live.ground_truth import write_ground_truth
 from live.prediction import PredictionError, build_race_features
 
-CIRCUITS = {
-    k: Circuit(circuit_key=k, name="Synthetic", country="Nowhere", circuit_type="permanent") for k in (101, 102, 103)
-}
-INFO = {r: RaceInfo(2024, r, "Synthetic", "permanent") for r in (1, 2, 3)}
 NO_SLEEP = {"sleep": lambda s: None}
 REFERENCE_TABLES = {"circuits", "drivers", "teams", "races", "race_entries", "ground_truth"}
 
-
-def mark_valid(raw_dir: Path, round: int, session: str) -> None:
-    meta_path = raw_dir / "2024" / f"{round:02d}" / session / "meta.json"
-    meta_path.write_text(json.dumps(json.loads(meta_path.read_text()) | {"valid": True, "errors": []}))
+pytestmark = pytest.mark.usefixtures("season_config")
 
 
 @pytest.fixture
-def raw(tmp_path: Path) -> Path:
-    """Rounds 1 and 2 with Q and R (clean, safety car) and round 3 with Saturday only: Q and FP2, no R."""
-    for round, scenario in ((1, "clean"), (2, "safety_car")):
-        write_race(tmp_path, 2024, round, scenario)
-        mark_valid(tmp_path, round, "Q")
-        mark_valid(tmp_path, round, "R")
-    write_session(tmp_path, 2024, 3, "Q", qualifying_tables())
-    write_session(tmp_path, 2024, 3, "FP2", practice_tables())
-    mark_valid(tmp_path, 3, "Q")
-    mark_valid(tmp_path, 3, "FP2")
-    return tmp_path
+def raw(season_raw):
+    return season_raw
 
 
 @pytest.fixture
-def schedule() -> pd.DataFrame:
-    return schedule_of(
-        meeting(1, NORMAL, "2024-03-01"), meeting(2, NORMAL, "2024-03-08"), meeting(3, NORMAL, "2024-03-15")
-    )
-
-
-@pytest.fixture(autouse=True)
-def config(monkeypatch):
-    monkeypatch.setattr("ingestion.reference.load_circuits", lambda: CIRCUITS)
-    monkeypatch.setattr("ingestion.reference.load_team_aliases", lambda: {})
-
-
-def skipped(year, round, session, **kwargs):
-    return IngestResult(year, round, session, "skipped", True, Path("."))
+def schedule(season_schedule_frame):
+    return season_schedule_frame
 
 
 @pytest.fixture
-def client(raw, schedule) -> FakeSupabase:
-    """Supabase with rounds 1 and 2 loaded (race, entries) but no ground truth; round 3 does not exist yet."""
-    client = FakeSupabase()
-    for round in (1, 2):
-        ensure_race_entries(
-            2024, round, client=client, schedule=schedule, ingest=skipped, raw_dir=raw, circuits=CIRCUITS, aliases={}
-        )
-    client.writes.clear()
-    return client
+def client(season_db):
+    return season_db
 
 
 def build(raw, client, schedule, **kw):

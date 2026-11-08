@@ -17,6 +17,8 @@ IDENTITY = {
     "feature_sets": "feature_set_id",
     "model_versions": "model_version_id",
     "champion_history": "champion_id",
+    "prediction_runs": "prediction_run_id",
+    "predictions": "prediction_id",
 }
 
 

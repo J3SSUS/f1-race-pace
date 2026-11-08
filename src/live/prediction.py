@@ -10,6 +10,7 @@ import time
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from functools import partial
 from pathlib import Path
 
@@ -20,12 +21,13 @@ from mlflow import MlflowClient
 from mlflow.exceptions import MlflowException
 from sklearn.pipeline import Pipeline
 
-from common.supabase_io import get_client
+from common.supabase_io import get_client, insert_rows, upsert_rows
 from features import race_features
 from features.catalog import load_catalog
-from features.store import RaceRef, StoreError, read_table
+from features.store import FeatureSet, RaceRef, StoreError, feature_value_rows, read_table
+from ingestion.openf1_client import SessionNotAvailable
 from ingestion.reference import ReferenceDataError, ensure_race_entries
-from ingestion.schedule import expected_sessions
+from ingestion.schedule import expected_sessions, load_schedule
 from ingestion.session import RAW_DIR, Loader, ingest_session
 from live.ground_truth import GroundTruthError, read_race_ref, write_ground_truth
 from live.history import missing_ground_truth, read_history
@@ -241,4 +243,163 @@ def predict_entries(models: Models, frame: pd.DataFrame) -> pd.DataFrame:
             "predicted_pace_delta_pct": champion.to_numpy(),
             "baseline_pace_delta_pct": baseline.to_numpy(),
         }
+    )
+
+
+@dataclass(frozen=True)
+class PredictionResult:
+    year: int
+    round: int
+    run_id: str  # dag_run_id of prediction_runs and pipeline_run_id of feature_values
+    prediction_run_id: int
+    model_version_id: int  # the champion's
+    entries: int  # predictions written
+    is_late: bool
+    race_start: str  # ISO UTC, the R session of the schedule
+    ground_truth_filled: list[tuple[int, int]]  # earlier races whose ground truth this run wrote
+    sessions: dict[str, str]  # "FP2" and "S" -> "downloaded" | "skipped" | "not in the event"
+
+
+def _read_feature_set(client) -> FeatureSet:
+    """The catalog's feature set as it is in Supabase (read only: the champion check already needs it to exist)."""
+    catalog = load_catalog()
+    set_id = feature_set_id_of(client, catalog.version)
+    ids = {f["name"]: f["feature_id"] for f in read_table(client, "features", "feature_id,name")}
+    missing = [name for name in catalog.names if name not in ids]
+    if missing:
+        raise StoreError(f"features {missing} are not in the features table: run scripts/load_features.py first")
+    return FeatureSet(set_id, {name: ids[name] for name in catalog.names})
+
+
+def _refuse_if_predicted(client, model_version_id: int, label: str):
+    """The guard: `check` of `build_race_features`; a race already predicted by this model version stops the run."""
+
+    def check(ref: RaceRef) -> None:
+        entries = set(ref.entry_ids.values())
+        done = [
+            p
+            for p in read_table(client, "predictions", "entry_id,model_version_id,generated_at")
+            if p["model_version_id"] == model_version_id and p["entry_id"] in entries
+        ]
+        if done:
+            when = min(str(p["generated_at"]) for p in done)
+            raise PredictionError(
+                f"{label} already has predictions of model version {model_version_id}, generated at {when}: "
+                "nothing was written; a Saturday prediction is never replaced (delete them by hand to predict again)"
+            )
+
+    return check
+
+
+def predict_race(
+    year: int,
+    round: int,
+    *,
+    client=None,
+    raw_dir: Path = RAW_DIR,
+    loader: Loader | None = None,
+    schedule: pd.DataFrame | None = None,
+    models: Models | None = None,
+    tracking_uri: str | None = None,
+    run_id: str | None = None,
+    now: datetime | None = None,
+    sleep: Callable[[float], None] = time.sleep,
+) -> PredictionResult:
+    """Predict one race with the champion from the data up to Saturday and store it.
+
+    The champion and the baseline are loaded first (so a missing alias stops the run before anything is written),
+    then the schedule, then `build_race_features` with the guard: a race that already has predictions of the
+    champion's version stops right after the race exists, writing nothing more. The features are upserted into
+    `feature_values` only after every entry has a prediction; then one `prediction_runs` row and one `predictions`
+    row per entry are inserted, with `generated_at` and `is_late` taken from the same `now`. If the `predictions`
+    insert fails after the run, the leftover run is harmless: the guard reads `predictions`, so a rerun works.
+    Every failure is a `PredictionError`; Supabase errors are reported by type only.
+    """
+    run_id = run_id or uuid.uuid4().hex
+    label = f"{year} round {round}"
+    try:
+        client = client if client is not None else get_client()
+        models = models if models is not None else load_models(client, tracking_uri)
+        champion_id = models.champion.model_version_id
+        if schedule is None:
+            try:
+                schedule = load_schedule(year)
+            except SessionNotAvailable:
+                raise PredictionError(
+                    "the OpenF1 schedule is blocked: a session is live (access is restricted from 30 minutes before "
+                    "a session until 30 minutes after it ends); retry 30 minutes after it ends"
+                ) from None
+            except Exception as exc:
+                raise PredictionError(f"the OpenF1 schedule could not be loaded ({type(exc).__name__})") from None
+        start = race_start(schedule, year, round)
+
+        built = build_race_features(
+            year,
+            round,
+            schedule,
+            client=client,
+            raw_dir=raw_dir,
+            loader=loader,
+            run_id=run_id,
+            sleep=sleep,
+            check=_refuse_if_predicted(client, champion_id, label),
+        )
+        predicted = predict_entries(models, built.frame)
+
+        catalog = load_catalog()
+        upsert_rows(
+            client,
+            "feature_values",
+            feature_value_rows(built.frame, built.ref.entry_ids, _read_feature_set(client), catalog, run_id),
+            "entry_id,feature_id,feature_set_id",
+        )
+
+        now = now or datetime.now(UTC)
+        now = now.replace(tzinfo=UTC) if now.tzinfo is None else now.astimezone(UTC)
+        generated_at = now.isoformat()
+        is_late = now > start.to_pydatetime()
+        races = read_table(client, "races", "race_id,year,round")
+        race_id = next(r["race_id"] for r in races if (r["year"], r["round"]) == (year, round))
+        run_row = insert_rows(
+            client,
+            "prediction_runs",
+            [
+                {
+                    "race_id": race_id,
+                    "model_version_id": champion_id,
+                    "dag_run_id": run_id,
+                    "generated_at": generated_at,
+                    "is_late": is_late,
+                }
+            ],
+        )[0]
+        rows = [
+            {
+                "prediction_run_id": run_row["prediction_run_id"],
+                "entry_id": built.ref.entry_ids[record["driver"]],
+                "model_version_id": champion_id,
+                "predicted_pace_delta_pct": float(record["predicted_pace_delta_pct"]),
+                "baseline_pace_delta_pct": (
+                    None if pd.isna(record["baseline_pace_delta_pct"]) else float(record["baseline_pace_delta_pct"])
+                ),
+                "generated_at": generated_at,
+            }
+            for record in predicted.to_dict("records")
+        ]
+        insert_rows(client, "predictions", rows)
+    except PredictionError:
+        raise
+    except (StoreError, RuntimeError) as exc:  # the messages of both name the table and the error type only
+        raise PredictionError(str(exc)) from None
+    return PredictionResult(
+        year,
+        round,
+        run_id,
+        run_row["prediction_run_id"],
+        champion_id,
+        len(rows),
+        is_late,
+        start.isoformat(),
+        built.ground_truth_filled,
+        built.sessions,
     )
