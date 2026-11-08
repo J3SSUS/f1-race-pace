@@ -5,11 +5,15 @@ touches the other's table.
 """
 
 import time
+import uuid
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 
+from common.supabase_io import get_client, upsert_rows
 from features.race_info import RaceInfo
-from features.store import LOAD_REFERENCE, RaceRef, read_table
+from features.store import LOAD_REFERENCE, RaceRef, ground_truth_rows, read_table
+from features.target import race_target
 from ingestion.openf1_client import SessionNotAvailable
 from ingestion.session import RAW_DIR, Loader, ingest_session, read_meta
 
@@ -111,3 +115,48 @@ def ingest_race_sessions(
         session: _ingest_one(year, round, session, run_id=run_id, raw_dir=raw_dir, loader=loader, sleep=sleep)
         for session in SESSIONS
     }
+
+
+@dataclass(frozen=True)
+class GroundTruthResult:
+    year: int
+    round: int
+    run_id: str  # also written to ground_truth.dag_run_id and to the meta.json of the sessions it downloads
+    entries: int  # rows written
+    valid_rows: int  # rows with is_valid_row = true
+    sessions: dict[str, str]  # "Q" and "R" -> "downloaded" | "skipped"
+
+
+def write_ground_truth(
+    year: int,
+    round: int,
+    *,
+    client=None,
+    raw_dir: Path = RAW_DIR,
+    loader: Loader | None = None,
+    run_id: str | None = None,
+    sleep: Callable[[float], None] = time.sleep,
+) -> GroundTruthResult:
+    """Read the race, ingest `Q` and `R`, compute the actual target and upsert one `ground_truth` row per entry.
+
+    Every row is built before anything is written, and the only write is one upsert on `entry_id`, so a failure never
+    leaves a race with a partial ground truth. An existing row of the race is overwritten (`dag_run_id` takes this
+    run); the values do not change because the target is deterministic. Raises `GroundTruthError`, or `StoreError`
+    for a driver of the race with no `race_entries` row; the Supabase error is reported by type only.
+    """
+    run_id = run_id or uuid.uuid4().hex
+    client = client if client is not None else get_client()
+    ref = read_race_ref(client, year, round)
+    sessions = ingest_race_sessions(year, round, run_id=run_id, raw_dir=raw_dir, loader=loader, sleep=sleep)
+    try:
+        frame = race_target(ref.info, raw_dir)
+    except Exception as exc:
+        raise GroundTruthError(
+            f"race {year} round {round}: the target could not be computed ({type(exc).__name__}): {exc}"
+        ) from exc
+    rows = ground_truth_rows(frame.assign(year=year, round=round), ref.entry_ids, run_id)
+    try:
+        upsert_rows(client, "ground_truth", rows, "entry_id")
+    except RuntimeError as exc:
+        raise GroundTruthError(str(exc)) from None
+    return GroundTruthResult(year, round, run_id, len(rows), sum(row["is_valid_row"] for row in rows), sessions)
