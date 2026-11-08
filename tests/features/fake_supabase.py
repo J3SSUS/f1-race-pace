@@ -17,6 +17,8 @@ IDENTITY = {
     "feature_sets": "feature_set_id",
     "model_versions": "model_version_id",
     "champion_history": "champion_id",
+    "prediction_runs": "prediction_run_id",
+    "predictions": "prediction_id",
 }
 
 
@@ -105,6 +107,7 @@ class Query:
         rows = self._client.tables.get(self._table, [])
         for column, allowed in self._in:
             rows = [r for r in rows if r.get(column) in allowed]
+        rows = [r for r in rows if all(r.get(c) == v for c, v in self._filters)]
         rows = rows[first:stop]
         if self._columns is not None:
             rows = [{c: row.get(c) for c in self._columns} for row in rows]
