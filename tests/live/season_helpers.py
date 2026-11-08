@@ -8,7 +8,9 @@ from fake_supabase import FakeSupabase
 from synthetic_race import practice_tables, qualifying_tables, write_race, write_session
 from test_schedule import NORMAL, meeting, schedule_of
 
+from features.catalog import load_catalog
 from features.race_info import RaceInfo
+from features.store import write_feature_set
 from ingestion.reference import ensure_race_entries
 from ingestion.reference_config import Circuit
 from ingestion.session import IngestResult
@@ -48,8 +50,9 @@ def skipped(year, round, session, **kwargs):
 
 
 def season_client(raw_dir: Path, schedule: pd.DataFrame) -> FakeSupabase:
-    """Supabase with rounds 1 and 2 loaded (race, entries) but no ground truth; round 3 does not exist yet."""
+    """Supabase with the feature set and rounds 1 and 2 loaded (race, entries), no ground truth and no round 3."""
     client = FakeSupabase()
+    write_feature_set(client, load_catalog())
     for round in (1, 2):
         ensure_race_entries(
             2024,
