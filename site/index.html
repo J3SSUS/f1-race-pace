@@ -20,7 +20,32 @@
 
     <section id="results" aria-labelledby="results-title">
       <h2 id="results-title">Results</h2>
-      <div id="results-figures"></div>
+      <div id="results-figures" class="figures">
+        <article class="figure" data-metric="mae">
+          <h3>MAE</h3>
+          <p class="figure-value" data-role="champion">&mdash;</p>
+          <p class="figure-baseline">Baseline <span data-role="baseline">&mdash;</span></p>
+          <p class="figure-hint">Mean absolute error of the pace delta, lower is better.</p>
+        </article>
+        <article class="figure" data-metric="rmse">
+          <h3>RMSE</h3>
+          <p class="figure-value" data-role="champion">&mdash;</p>
+          <p class="figure-baseline">Baseline <span data-role="baseline">&mdash;</span></p>
+          <p class="figure-hint">Root mean squared error, lower is better.</p>
+        </article>
+        <article class="figure" data-metric="r2">
+          <h3>R&sup2;</h3>
+          <p class="figure-value" data-role="champion">&mdash;</p>
+          <p class="figure-baseline">Baseline <span data-role="baseline">&mdash;</span></p>
+          <p class="figure-hint">Share of the variation explained, higher is better.</p>
+        </article>
+        <article class="figure" data-metric="pairwise_acc">
+          <h3>Pairwise accuracy</h3>
+          <p class="figure-value" data-role="champion">&mdash;</p>
+          <p class="figure-baseline">Baseline <span data-role="baseline">&mdash;</span></p>
+          <p class="figure-hint">Pairs of drivers put in the right order, higher is better.</p>
+        </article>
+      </div>
       <div id="results-by-race"></div>
     </section>
 

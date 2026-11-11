@@ -1,3 +1,9 @@
 /* Source of site/site.css. SPEC 16 step 12 writes the visual identity; until then, a readable default. */
 body { font-family: system-ui, sans-serif; margin: 0 auto; max-width: 60rem; padding: 0 1rem; }
 section[hidden], #notice[hidden] { display: none; }
+.figures { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr)); }
+.figure-value { font-size: 2.5rem; font-variant-numeric: tabular-nums; margin: 0; }
+.race-bars { list-style: none; padding: 0; }
+.race-bar { display: grid; gap: 0.25rem; grid-template-columns: 12rem 1fr 1fr auto; align-items: center; }
+.bar { background: currentColor; display: block; height: 0.6rem; }
+.bar.baseline { opacity: 0.4; }

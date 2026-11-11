@@ -2,7 +2,7 @@
    Data access (SPEC 16 step 6): the page reads Supabase with `fetch` and the anon key and, if any read fails or takes
    longer than `timeoutMs`, switches to `snapshot.json` as a whole, never a mix. Both sources end in the same shape
    (`{ champion, baseline, races, metrics, results }`, the snapshot of the data model), so one rendering code serves
-   both. Step 7 adds the formatting and the champion and baseline lookup; steps 8 to 12 the sections and the motion. */
+   both. Step 7 adds the formatting and the champion and baseline lookup; steps 8 to 12 the sections and the motion. Step 8 adds the hero and the Results section. */
 "use strict";
 
 const PAGE_SIZE = 1000; // PostgREST returns at most 1,000 rows per request by default
@@ -173,8 +173,147 @@ function describeSource(result) {
   return "No data available.";
 }
 
+/* ---- Hero and Results (pure parts, tested with Node) ---- */
+
+const FIGURE_METRICS = ["mae", "rmse", "r2", "pairwise_acc"];
+const COUNT_UP_MS = 1400;
+
+/* The four aggregate figures of the champion and the baseline, and the MAE of each race, in race order. */
+function buildResultsModel(data) {
+  const aggregate = (id, name) => {
+    const row = data.metrics.find((m) => m.model_version_id === id && m.race_id === null && m.metric_name === name);
+    return row ? row.value : null;
+  };
+  const championId = data.champion.model_version_id;
+  const baselineId = data.baseline.model_version_id;
+  const figures = FIGURE_METRICS.map((metric) => ({
+    metric,
+    champion: aggregate(championId, metric),
+    baseline: aggregate(baselineId, metric),
+  }));
+  const races = new Map(data.races.map((race) => [race.race_id, race]));
+  const perRace = new Map();
+  for (const m of data.metrics) {
+    if (m.race_id === null || m.metric_name !== "mae" || !races.has(m.race_id)) continue;
+    const entry = perRace.get(m.race_id) || { ...races.get(m.race_id), champion: null, baseline: null };
+    if (m.model_version_id === championId) entry.champion = m.value;
+    if (m.model_version_id === baselineId) entry.baseline = m.value;
+    perRace.set(m.race_id, entry);
+  }
+  const byRace = [...perRace.values()].sort((a, b) => a.year - b.year || a.round - b.round);
+  const scale = Math.max(0, ...byRace.flatMap((r) => [r.champion, r.baseline].filter((v) => v !== null)));
+  return { figures, byRace, scale };
+}
+
+/* The latest race with an actual pace, for the hero. `null` before the first race is scored. */
+function lastScoredRace(data) {
+  let last = null;
+  for (const row of data.results) {
+    if (row.actual_pace_delta_pct == null) continue;
+    if (!last || row.year > last.year || (row.year === last.year && row.round > last.round)) last = row;
+  }
+  if (!last) return null;
+  const race = data.races.find((r) => r.year === last.year && r.round === last.round);
+  return { year: last.year, round: last.round, event_name: race ? race.event_name : null, race_date: race ? race.race_date : null };
+}
+
+/* The value of a counting figure at `progress` (0 to 1): it eases out and ends exactly on the target. */
+function valueAt(target, progress) {
+  if (progress >= 1) return target;
+  if (progress <= 0) return 0;
+  return target * (1 - (1 - progress) ** 3);
+}
+
+/* ---- Hero and Results (DOM, checked by hand) ---- */
+
+function prefersReducedMotion() {
+  return typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
+}
+
+function el(tag, className, text) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text !== undefined) node.textContent = text;
+  return node;
+}
+
+function renderHero(data) {
+  const meta = document.getElementById("hero-meta");
+  if (!meta) return;
+  const race = lastScoredRace(data);
+  const model = `${data.champion.algorithm}, model version ${data.champion.model_version_id}`;
+  meta.textContent = race
+    ? `Champion: ${model}. Last race scored: ${race.event_name || `round ${race.round}`} (${race.race_date || race.year}).`
+    : `Champion: ${model}. No race scored yet.`;
+}
+
+/* Count a figure from 0 to its value, or show it at once with reduced motion or no animation frames. */
+function countUp(node, metric, target) {
+  const show = (value) => { node.textContent = formatMetric(metric, value); };
+  if (typeof target !== "number" || prefersReducedMotion() || typeof requestAnimationFrame !== "function") {
+    show(target);
+    return;
+  }
+  const start = performance.now();
+  const frame = (now) => {
+    const progress = (now - start) / COUNT_UP_MS;
+    show(valueAt(target, progress));
+    if (progress < 1) requestAnimationFrame(frame);
+  };
+  requestAnimationFrame(frame);
+}
+
+function renderByRace(container, model) {
+  container.replaceChildren();
+  const list = el("ol", "race-bars");
+  for (const race of model.byRace) {
+    const item = el("li", "race-bar");
+    item.append(el("span", "race-label", `R${race.round} ${race.event_name}`));
+    for (const role of ["champion", "baseline"]) {
+      const bar = el("span", `bar ${role}`);
+      const value = race[role];
+      bar.style.width = value === null || model.scale === 0 ? "0%" : `${(value / model.scale) * 100}%`;
+      item.append(bar);
+    }
+    item.append(el("span", "race-values", `${formatMetric("mae", race.champion)} / ${formatMetric("mae", race.baseline)}`));
+    list.append(item);
+  }
+  container.append(list);
+}
+
+/* The baseline and the per-race bars fill in at once; the champion figures count when the section enters the view. */
+function renderResults(data) {
+  const section = document.getElementById("results");
+  if (!section) return;
+  const model = buildResultsModel(data);
+  const targets = [];
+  for (const figure of model.figures) {
+    const card = section.querySelector(`[data-metric="${figure.metric}"]`);
+    if (!card) continue;
+    card.querySelector('[data-role="baseline"]').textContent = formatMetric(figure.metric, figure.baseline);
+    targets.push({ node: card.querySelector('[data-role="champion"]'), figure });
+  }
+  const byRace = document.getElementById("results-by-race");
+  if (byRace) renderByRace(byRace, model);
+  const start = () => targets.forEach(({ node, figure }) => countUp(node, figure.metric, figure.champion));
+  if (typeof IntersectionObserver !== "function") {
+    start();
+    return;
+  }
+  const observer = new IntersectionObserver((entries) => {
+    if (entries.some((entry) => entry.isIntersecting)) {
+      observer.disconnect();
+      start();
+    }
+  }, { threshold: 0.3 });
+  observer.observe(section);
+}
+
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { loadData, describeSource, formatMetric, findChampion, findBaseline, normalizeLive, PAGE_SIZE };
+  module.exports = {
+    loadData, describeSource, formatMetric, findChampion, findBaseline, normalizeLive,
+    buildResultsModel, lastScoredRace, valueAt, PAGE_SIZE,
+  };
 }
 
 /* Browser start: only the landing page (the one with the results) reads data. */
@@ -186,6 +325,10 @@ if (typeof document !== "undefined" && typeof SITE_CONFIG !== "undefined" && doc
     if (text && notice) {
       notice.textContent = text;
       notice.hidden = false;
+    }
+    if (result.data) {
+      renderHero(result.data);
+      renderResults(result.data);
     }
   });
 }

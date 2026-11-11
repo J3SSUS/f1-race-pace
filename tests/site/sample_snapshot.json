@@ -1,0 +1,165 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-11-10T21:00:00Z",
+  "champion": {
+    "model_version_id": 4,
+    "algorithm": "ridge",
+    "promoted_at": "2026-11-02T20:00:00Z"
+  },
+  "baseline": {
+    "model_version_id": 3,
+    "algorithm": "baseline"
+  },
+  "races": [
+    {
+      "race_id": 88,
+      "year": 2026,
+      "round": 16,
+      "event_name": "Sample Grand Prix",
+      "race_date": "2026-11-01"
+    },
+    {
+      "race_id": 89,
+      "year": 2026,
+      "round": 17,
+      "event_name": "Example Grand Prix",
+      "race_date": "2026-11-08"
+    }
+  ],
+  "metrics": [
+    {
+      "model_version_id": 4,
+      "race_id": null,
+      "metric_name": "mae",
+      "value": 0.5509
+    },
+    {
+      "model_version_id": 4,
+      "race_id": null,
+      "metric_name": "rmse",
+      "value": 0.9189
+    },
+    {
+      "model_version_id": 4,
+      "race_id": null,
+      "metric_name": "r2",
+      "value": 0.6446
+    },
+    {
+      "model_version_id": 4,
+      "race_id": null,
+      "metric_name": "pairwise_acc",
+      "value": 0.8916
+    },
+    {
+      "model_version_id": 3,
+      "race_id": null,
+      "metric_name": "mae",
+      "value": 0.732
+    },
+    {
+      "model_version_id": 3,
+      "race_id": null,
+      "metric_name": "rmse",
+      "value": 1.1076
+    },
+    {
+      "model_version_id": 3,
+      "race_id": null,
+      "metric_name": "r2",
+      "value": 0.4836
+    },
+    {
+      "model_version_id": 3,
+      "race_id": null,
+      "metric_name": "pairwise_acc",
+      "value": 0.8725
+    },
+    {
+      "model_version_id": 4,
+      "race_id": 88,
+      "metric_name": "mae",
+      "value": 0.48
+    },
+    {
+      "model_version_id": 3,
+      "race_id": 88,
+      "metric_name": "mae",
+      "value": 0.71
+    },
+    {
+      "model_version_id": 4,
+      "race_id": 89,
+      "metric_name": "mae",
+      "value": 0.62
+    },
+    {
+      "model_version_id": 3,
+      "race_id": 89,
+      "metric_name": "mae",
+      "value": 0.75
+    }
+  ],
+  "results": [
+    {
+      "year": 2026,
+      "round": 16,
+      "driver": "NOR",
+      "team": "McLaren",
+      "predicted_pace_delta_pct": -0.62,
+      "actual_pace_delta_pct": -0.55,
+      "is_valid_row": true,
+      "is_late": true
+    },
+    {
+      "year": 2026,
+      "round": 16,
+      "driver": "LEC",
+      "team": "Ferrari",
+      "predicted_pace_delta_pct": -0.1,
+      "actual_pace_delta_pct": -0.21,
+      "is_valid_row": true,
+      "is_late": true
+    },
+    {
+      "year": 2026,
+      "round": 16,
+      "driver": "ALB",
+      "team": "Williams",
+      "predicted_pace_delta_pct": 0.8,
+      "actual_pace_delta_pct": 0.95,
+      "is_valid_row": true,
+      "is_late": true
+    },
+    {
+      "year": 2026,
+      "round": 17,
+      "driver": "NOR",
+      "team": "McLaren",
+      "predicted_pace_delta_pct": -0.58,
+      "actual_pace_delta_pct": -0.4,
+      "is_valid_row": true,
+      "is_late": true
+    },
+    {
+      "year": 2026,
+      "round": 17,
+      "driver": "LEC",
+      "team": "Ferrari",
+      "predicted_pace_delta_pct": -0.05,
+      "actual_pace_delta_pct": 0.1,
+      "is_valid_row": true,
+      "is_late": false
+    },
+    {
+      "year": 2026,
+      "round": 17,
+      "driver": "SAR",
+      "team": "Haas F1 Team",
+      "predicted_pace_delta_pct": 1.2,
+      "actual_pace_delta_pct": null,
+      "is_valid_row": false,
+      "is_late": false
+    }
+  ]
+}
