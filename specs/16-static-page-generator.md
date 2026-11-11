@@ -14,14 +14,14 @@
 
 - A new module `src/sitegen/` with the generator and `scripts/build_site.py`, a thin CLI that writes `site/index.html`, `site/model.html`, `site/site.css`, `site/site.js` and `site/fonts/`, and prints what it wrote. The source templates live in `docs/site/` (`index.html.j2`, `model.html.j2`, `site.css`, `site.js` and the font files). Jinja2 renders with `StrictUndefined`, so a missing value raises.
 - The landing page, `site/index.html`, with these sections in order:
-  1. **Hero:** the title, the champion's model version and the date of the last race with ground truth.
+  1. **Hero:** the title, the last race with ground truth and its date, and a circuit with one dot per driver of that race, each running at its predicted pace (the differences exaggerated tenfold, and the caption says so).
   2. **Results:** MAE, RMSE, R² and pairwise accuracy of the champion against the baseline (the `walk_forward` aggregate of `metrics`), plus the per-race MAE.
   3. **Race:** a race selector (default: the latest race with a prediction) and, for that race, a table with one row per driver and the predicted and actual pace.
   4. **Predicted vs actual:** an SVG scatter plot drawn in JavaScript for the selected race. Its points are drawn in sequence and move to their new position when the race changes.
   5. **Features:** the champion's features and their permutation importance, read from `site/charts/explain.json` (SPEC 11).
   6. **Model link:** a link to `model.html` ("How the model works"). The landing holds no text of the model card.
 - The model page, `site/model.html`: the opening of `MODEL_CARD.md` and its first `##` section visible, and the rest of the card inside a closed `<details>` ("Read the full model card"), rendered with Python's Markdown library, with the SPEC 11 `.svg` charts linked by relative path and a link back to the landing. It needs no Supabase data.
-- **Late predictions:** a prediction with `is_late = true` shows a visible mark in the table, in the scatter plot and in the race header.
+- **Late predictions:** a prediction with `is_late = true` shows a visible mark in the table, in the scatter plot and in the race header, and a race whose predictions are late has a small note under its header saying what late means.
 - **Data access:** `site.js` reads Supabase from the browser with `fetch` to the PostgREST API (no library), using the anon key and only the public tables and views: `prediction_results`, `metrics`, `races`, `model_versions` and `champion_history`. It identifies the champion through `champion_history` and `model_versions`. If any query fails or takes more than 8 seconds, the page switches to `snapshot.json` as a whole (never a mix) and shows a notice with the snapshot date. The snapshot format is defined here, the script that writes it is SPEC 17, and this spec tests the fallback with a sample snapshot in `tests/`.
 - **Credentials:** the generator reads `SUPABASE_URL` and `SUPABASE_ANON_KEY` from the environment or `.env` and writes them into `site.js`. It never reads `SUPABASE_SERVICE_KEY`, and a test checks that the key does not appear in any file of `site/`.
 - **Visual identity:** a telemetry and pitwall style (dark background, large tabular numbers, thin lines, traces), designed with the `frontend-design` skill. Colors per team come from the new `config/team_colors.json`, keyed by the names stored in `teams.name`; a team without a color is drawn in a neutral gray.
@@ -165,6 +165,7 @@ Each step leaves `uv run pytest tests` green and can be committed on its own. Th
 - [ ] The four metric figures count from 0 to their value when the Results section enters the viewport, and show an em dash until the data loads.
 - [ ] Every section enters with an animation on scroll, and the scatter plot draws its points in sequence and moves them when the race changes.
 - [ ] With `prefers-reduced-motion: reduce` there is no animation and the final values show at once.
+- [ ] The hero circuit has one dot per driver of the last scored race, all on the track and moving at different speeds; with `prefers-reduced-motion: reduce` they stand still.
 - [ ] At 375 px wide there is no horizontal scroll, and at 1440 px no section overflows.
 - [ ] The page is dark with the `frontend-design` identity chosen in step 12, uses only the committed local fonts (OFL), and the text/background contrast is at least 4.5:1.
 

@@ -498,6 +498,27 @@ function placeLabel({ px, py, width, font, radius, bounds }) {
   };
 }
 
+/* ---- Hero circuit (pure part, tested with Node) ---- */
+
+/* One runner per driver of a race. A lap takes longer the slower the driver is predicted to be, with the difference
+   exaggerated so it can be seen; the grid is ordered fastest first, so the front car starts on the line. */
+function runnerLaps(rows, { baseSeconds = 16, exaggeration = 10 } = {}) {
+  const usable = rows.filter((row) => typeof row.predicted_pace_delta_pct === "number" && Number.isFinite(row.predicted_pace_delta_pct));
+  usable.sort((a, b) => a.predicted_pace_delta_pct - b.predicted_pace_delta_pct || a.driver.localeCompare(b.driver));
+  return usable.map((row, index) => ({
+    driver: row.driver,
+    team: row.team,
+    lapSeconds: Math.max(baseSeconds * 0.3, baseSeconds * (1 + (exaggeration * row.predicted_pace_delta_pct) / 100)),
+    offset: -index * 0.012,
+  }));
+}
+
+/* Where a runner is on the lap (0 to 1) after `seconds`. */
+function lapFraction(runner, seconds) {
+  const fraction = (runner.offset + seconds / runner.lapSeconds) % 1;
+  return fraction < 0 ? fraction + 1 : fraction;
+}
+
 /* ---- Hero and Results (DOM, checked by hand) ---- */
 
 function prefersReducedMotion() {
@@ -515,10 +536,46 @@ function renderHero(data) {
   const meta = document.getElementById("hero-meta");
   if (!meta) return;
   const race = lastScoredRace(data);
-  const model = `${data.champion.algorithm}, model version ${data.champion.model_version_id}`;
   meta.textContent = race
-    ? `Champion: ${model}. Last race scored: ${race.event_name || `round ${race.round}`} (${race.race_date || race.year}).`
-    : `Champion: ${model}. No race scored yet.`;
+    ? `Last race scored: ${race.event_name || `round ${race.round}`} (${race.race_date || race.year}).`
+    : "No race scored yet.";
+}
+
+/* The dots of the last scored race run around the circuit; with reduced motion they stand still, already spread out. */
+function startRunners(data, colors) {
+  const track = document.getElementById("circuit-track");
+  const holder = document.getElementById("circuit-runners");
+  const note = document.getElementById("circuit-note");
+  const race = lastScoredRace(data);
+  if (!track || !holder || !race) return;
+  const laps = runnerLaps(raceRows(data, race.year, race.round));
+  if (laps.length === 0) return;
+  const length = track.getTotalLength();
+  const dots = laps.map((lap) => {
+    const dot = svgEl("circle", { class: "runner", r: 5 });
+    const color = teamColor(colors, lap.team);
+    if (color) dot.style.setProperty("--team", color);
+    dot.append(svgEl("title", {}, `${lap.driver} (${lap.team})`));
+    holder.append(dot);
+    return dot;
+  });
+  const place = (seconds) => laps.forEach((lap, index) => {
+    const point = track.getPointAtLength(lapFraction(lap, seconds) * length);
+    dots[index].setAttribute("cx", point.x.toFixed(1));
+    dots[index].setAttribute("cy", point.y.toFixed(1));
+  });
+  if (note) note.textContent = `${race.event_name || `Round ${race.round}`}: each dot runs at its driver's predicted pace, with the differences exaggerated tenfold.`;
+  holder.classList.add("ready");
+  if (prefersReducedMotion() || typeof requestAnimationFrame !== "function") {
+    place(14);
+    return;
+  }
+  const origin = performance.now();
+  const frame = (now) => {
+    place((now - origin) / 1000);
+    requestAnimationFrame(frame);
+  };
+  requestAnimationFrame(frame);
 }
 
 /* Count a figure from 0 to its value, or show it at once with reduced motion or no animation frames. */
@@ -771,6 +828,8 @@ function redrawOnResize(plot, note) {
 
 /* ---- Race section (DOM, checked by hand) ---- */
 
+const LATE_EXPLANATION = "Late: these predictions were made after the race had started, from Saturday data only.";
+
 function lateMark() {
   const mark = el("span", "late-mark", "late");
   mark.title = "Predicted after the race had started";
@@ -803,6 +862,7 @@ function renderRaceSection(data, colors) {
   const select = document.getElementById("race-select");
   const table = document.getElementById("race-table");
   const meta = document.getElementById("race-meta");
+  const lateNote = document.getElementById("race-late-note");
   if (!select || !table || !meta) return;
   const races = racesWithPredictions(data);
   if (races.length === 0) {
@@ -829,6 +889,10 @@ function renderRaceSection(data, colors) {
     const header = raceHeader(race, rows);
     meta.replaceChildren(header.date ? `${header.title}, ${header.date}` : header.title);
     if (header.late) meta.append(" ", lateMark());
+    if (lateNote) {
+      lateNote.hidden = !header.late;
+      lateNote.textContent = header.late ? LATE_EXPLANATION : "";
+    }
     renderRaceTable(table, rows, colors);
   };
   select.value = raceKey(races[races.length - 1].year, races[races.length - 1].round); // the latest race
@@ -862,7 +926,7 @@ if (typeof module !== "undefined" && module.exports) {
   module.exports = {
     loadData, describeSource, formatMetric, findChampion, findBaseline, normalizeLive,
     buildResultsModel, lastScoredRace, valueAt,
-    formatPace, teamColor, racesWithPredictions, raceRows, raceHeader, raceKey, niceTicks, scatterModel, declutterLabels, placeLabel, featuresModel, PAGE_SIZE,
+    formatPace, teamColor, racesWithPredictions, raceRows, raceHeader, raceKey, niceTicks, scatterModel, declutterLabels, placeLabel, featuresModel, runnerLaps, lapFraction, PAGE_SIZE,
   };
 }
 
@@ -879,6 +943,7 @@ if (typeof document !== "undefined" && typeof SITE_CONFIG !== "undefined" && doc
     }
     if (result.data) {
       renderHero(result.data);
+      startRunners(result.data, SITE_CONFIG.teamColors);
       renderResults(result.data);
       renderRaceSection(result.data, SITE_CONFIG.teamColors);
       renderFeatures(result.data, SITE_CONFIG.championExplain);
