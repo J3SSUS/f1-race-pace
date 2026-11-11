@@ -4,13 +4,25 @@
 target and a non-null baseline prediction), with `training.metrics.score`, the only implementation of the metrics.
 """
 
-import pandas as pd
+from dataclasses import dataclass
 
-from features.store import read_table
+import pandas as pd
+from mlflow import MlflowClient
+
+from common.supabase_io import get_client, upsert_rows
+from features.store import StoreError, read_table
+from live.prediction import PredictionError, find_baseline
 from training.metrics import score
-from training.registry import metric_rows
+from training.registry import METRIC_NAMES, METRICS_KEY, metric_rows
+from training.sampling import SAMPLING_TAG, resolve_tracking_uri
 
 SPLIT = "walk_forward"
+
+
+class MetricsError(Exception):
+    """The metrics of a year cannot be computed or stored; the message is worded for the user and has no secret."""
+
+
 FRAME_COLUMNS = ["race_id", "year", "round", "driver", "model_version_id", "predicted", "baseline", "actual"]
 
 
@@ -102,4 +114,86 @@ def walk_forward_rows(frame: pd.DataFrame, champion_version_id: int, baseline_ve
     frame = frame[frame["model_version_id"] == champion_version_id].reset_index(drop=True)
     return _model_rows(frame, "predicted", champion_version_id, "the champion") + _model_rows(
         frame, "baseline", baseline_version_id, "the baseline"
+    )
+
+
+@dataclass(frozen=True)
+class ModelMetrics:
+    model_version_id: int
+    algorithm: str  # "ridge" for the champion, "baseline" for the baseline
+    races: int  # races with at least one evaluated row
+    rows: int  # evaluated rows (the same ones for both models)
+    scores: dict[str, float]  # the aggregate over all evaluated rows: mae, rmse, r2, pairwise_accuracy
+
+
+@dataclass(frozen=True)
+class MetricsResult:
+    year: int
+    champion: ModelMetrics
+    baseline: ModelMetrics
+    rows_written: int  # metrics rows upserted
+
+
+def _aggregate(rows: list[dict], version_id: int) -> dict[str, float]:
+    """The aggregate scores of one version, under the SPEC 07 names (`pairwise_acc` is `pairwise_accuracy`)."""
+    names = {stored: name for name, stored in METRIC_NAMES.items()}
+    return {
+        names[r["metric_name"]]: r["value"]
+        for r in rows
+        if r["model_version_id"] == version_id and r["race_id"] is None
+    }
+
+
+def walk_forward_metrics(client=None, *, year: int, tracking_uri: str | None = None) -> MetricsResult:
+    """Recompute and upsert the `walk_forward` metrics of `year` for the champion and the baseline.
+
+    The champion is the one `model_version_id` found in the predictions of the year (`evaluation_frame`); its
+    baseline is found from its sampling run (`model_versions`, then the tag of its MLflow run) with `find_baseline`.
+    Raises `MetricsError`, writing nothing, when no race has both a prediction and a valid ground truth, when the
+    predictions hold more than one version, when the baseline cannot be found or when Supabase or MLflow fail
+    (reported by type). It writes only `metrics`, upserted on `METRICS_KEY`: rerunning duplicates nothing.
+    """
+    try:
+        client = client if client is not None else get_client()
+        frame = evaluation_frame(client, year)
+        if frame.empty:
+            raise MetricsError(f"no race of {year} has both a prediction and a valid ground truth")
+        versions = sorted(frame["model_version_id"].unique().tolist())
+        if len(versions) > 1:
+            raise MetricsError(
+                f"the predictions of {year} hold several model versions ({', '.join(map(str, versions))}): "
+                "scoring more than one champion is not supported yet"
+            )
+        champion_id = int(versions[0])
+        ml = MlflowClient(resolve_tracking_uri(tracking_uri))
+        model_versions = read_table(client, "model_versions", "model_version_id,mlflow_run_id,algorithm")
+        champion = next((r for r in model_versions if r["model_version_id"] == champion_id), None)
+        if champion is None:
+            raise MetricsError(f"model version {champion_id} has no model_versions row")
+        sampling_run_id = ml.get_run(champion["mlflow_run_id"]).data.tags.get(SAMPLING_TAG, "")
+        if not sampling_run_id:
+            raise MetricsError(f"the run of model version {champion_id} has no {SAMPLING_TAG} tag")
+        baseline = find_baseline(client, ml, sampling_run_id, rows=model_versions)
+        rows = walk_forward_rows(frame, champion_id, baseline["model_version_id"])
+        stored = upsert_rows(client, "metrics", rows, METRICS_KEY)
+    except MetricsError:
+        raise
+    except (
+        PredictionError,
+        StoreError,
+        ValueError,
+        RuntimeError,
+    ) as exc:  # the messages of all are worded for the user
+        raise MetricsError(str(exc)) from None
+    except Exception as exc:  # MLflow or Supabase down: the type only, never a body
+        raise MetricsError(f"the metrics of {year} could not be computed ({type(exc).__name__})") from None
+
+    races, n = int(frame["race_id"].nunique()), len(frame)
+    return MetricsResult(
+        year,
+        ModelMetrics(champion_id, champion["algorithm"], races, n, _aggregate(rows, champion_id)),
+        ModelMetrics(
+            int(baseline["model_version_id"]), "baseline", races, n, _aggregate(rows, baseline["model_version_id"])
+        ),
+        len(stored),
     )
