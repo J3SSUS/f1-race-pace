@@ -1,11 +1,8 @@
-import json
-import shutil
-
 import pytest
+from sitegen_helpers import ENV
 
-from sitegen.inputs import ROOT, SiteConfig, SiteInputs, read_inputs
+from sitegen.inputs import SiteConfig, SiteInputs, read_inputs
 
-ENV = {"SUPABASE_URL": "https://abc.supabase.co/", "SUPABASE_ANON_KEY": "anon-key"}
 FAKE_SERVICE_KEY = "service-key-must-never-appear"
 
 
@@ -23,18 +20,6 @@ class Spy(dict):
     def __getitem__(self, key):
         self.looked_up.append(key)
         return super().__getitem__(key)
-
-
-@pytest.fixture
-def root(tmp_path):
-    (tmp_path / "config").mkdir()
-    shutil.copy(ROOT / "config" / "team_colors.json", tmp_path / "config" / "team_colors.json")
-    (tmp_path / "site" / "charts").mkdir(parents=True)
-    (tmp_path / "site" / "charts" / "explain.json").write_text(json.dumps({"model_version_id": 4, "importance": []}))
-    (tmp_path / "MODEL_CARD.md").write_text(
-        "# Card\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\n![Importance](site/charts/permutation_importance.svg)\n"
-    )
-    return tmp_path
 
 
 def test_it_returns_the_four_inputs(root):
