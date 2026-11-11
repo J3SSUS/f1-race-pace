@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>F1 race pace</title>
+  <meta name="description" content="Predicted race pace of every F1 driver after Saturday qualifying, against what happened on Sunday.">
+  <link rel="preload" href="fonts/barlow-condensed-latin-700-normal.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="fonts/jetbrains-mono-latin-700-normal.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="site.css">
+  <script src="site.js" defer></script>
+</head>
+<body>
+  <div id="notice" role="status" hidden></div>
+  <div id="pending-banner" role="status" hidden></div>
+  <noscript><p class="noscript">This page needs JavaScript to load the data.</p></noscript>
+  <header class="masthead">
+    <a class="wordmark" href="#hero">F1 race pace</a>
+    <a class="masthead-link" href="model.html">How the model works</a>
+  </header>
+  <main>
+    <section id="hero" aria-labelledby="hero-title">
+      <div class="hero-grid">
+        <div class="hero-copy">
+          <p class="eyebrow">Race pace model</p>
+          <h1 id="hero-title">Called before lights out</h1>
+          <p class="lede">After Saturday qualifying, a model predicts how fast each driver will be over a race distance. Every prediction is scored against what happened.</p>
+          <p id="hero-meta" class="meta"></p>
+        </div>
+        <figure class="hero-circuit">
+          <svg id="circuit" viewBox="36 36 332 254" role="img" aria-label="A circuit with one dot per driver of the last scored race, each running at that driver's predicted pace">
+            <path id="circuit-track" class="track-line" pathLength="1" d="M 70 200 C 50 160 70 110 120 100 L 200 85 C 250 76 270 50 310 60 C 350 70 360 110 330 135 C 305 155 270 150 255 175 C 242 198 270 215 300 220 C 330 226 345 250 320 265 C 290 282 200 270 150 262 C 100 255 82 232 70 200 Z"/>
+            <path class="track-center" d="M 70 200 C 50 160 70 110 120 100 L 200 85 C 250 76 270 50 310 60 C 350 70 360 110 330 135 C 305 155 270 150 255 175 C 242 198 270 215 300 220 C 330 226 345 250 320 265 C 290 282 200 270 150 262 C 100 255 82 232 70 200 Z"/>
+            <line class="start-line" x1="58" y1="203" x2="82" y2="197"/>
+            <g id="circuit-runners"></g>
+          </svg>
+          <div id="runner-tip" class="runner-tip" role="tooltip" hidden></div>
+          <figcaption id="circuit-note"></figcaption>
+        </figure>
+      </div>
+      <svg class="hero-trace" viewBox="0 0 1200 140" preserveAspectRatio="none" aria-hidden="true" focusable="false">
+        <defs>
+          <linearGradient id="trace-gradient" x1="0" x2="1" y1="0" y2="0">
+            <stop offset="0" style="stop-color: var(--champion)"/>
+            <stop offset="1" style="stop-color: var(--good)"/>
+          </linearGradient>
+        </defs>
+        <path d="M0 30.0 L8 31.8 L16 33.2 L24 33.9 L32 33.8 L40 32.8 L48 31.3 L56 29.4 L64 27.8 L72 27.1 L80 28.2 L88 32.9 L96 43.5 L104 61.7 L112 85.7 L120 108.7 L128 121.3 L136 117.4 L144 99.1 L152 74.9 L160 53.3 L168 38.6 L176 30.6 L184 27.2 L192 26.5 L200 27.2 L208 28.7 L216 30.6 L224 32.4 L232 33.9 L240 35.0 L248 36.1 L256 38.0 L264 41.9 L272 48.9 L280 59.4 L288 72.3 L296 85.1 L304 94.6 L312 97.9 L320 94.1 L328 84.6 L336 72.2 L344 59.7 L352 49.1 L360 41.0 L368 35.2 L376 31.1 L384 28.4 L392 26.7 L400 26.1 L408 26.4 L416 27.8 L424 30.5 L432 36.0 L440 47.7 L448 69.1 L456 98.0 L464 122.4 L472 127.2 L480 108.2 L488 77.5 L496 50.6 L504 34.9 L512 28.7 L520 27.6 L528 28.7 L536 30.5 L544 32.4 L552 34.0 L560 35.2 L568 36.2 L576 37.4 L584 39.8 L592 44.1 L600 50.9 L608 60.0 L616 70.7 L624 81.2 L632 89.5 L640 93.8 L648 93.1 L656 87.6 L664 78.6 L672 67.6 L680 56.5 L688 46.6 L696 38.6 L704 32.8 L712 29.1 L720 27.2 L728 26.9 L736 27.7 L744 29.6 L752 32.7 L760 38.4 L768 49.3 L776 67.8 L784 92.4 L792 114.4 L800 122.3 L808 110.7 L816 85.9 L824 59.9 L832 41.7 L840 32.7 L848 30.2 L856 30.7 L864 32.2 L872 33.5 L880 34.1 L888 34.1 L896 33.9 L904 34.3 L912 36.6 L920 42.5 L928 52.8 L936 67.0 L944 82.7 L952 95.6 L960 101.7 L968 99.2 L976 89.1 L984 74.9 L992 60.4 L1000 48.1 L1008 39.1 L1016 33.1 L1024 29.2 L1032 27.1 L1040 26.2 L1048 26.3 L1056 27.4 L1064 29.5 L1072 33.2 L1080 41.4 L1088 58.7 L1096 85.5 L1104 110.2 L1112 115.3 L1120 95.8 L1128 65.9 L1136 42.5 L1144 30.8 L1152 27.1 L1160 27.1 L1168 28.4 L1176 30.2 L1184 32.0 L1192 33.4 L1200 34.0" pathLength="1" fill="none" stroke="url(#trace-gradient)" stroke-width="2" vector-effect="non-scaling-stroke"/>
+      </svg>
+    </section>
+
+    <section id="results" class="reveal" aria-labelledby="results-title">
+      <p class="eyebrow">Champion against the qualifying baseline</p>
+      <h2 id="results-title">Results</h2>
+      <div id="results-figures" class="figures">
+        <article class="figure reveal" data-metric="mae">
+          <h3>MAE</h3>
+          <p class="figure-value" data-role="champion">&mdash;</p>
+          <p class="figure-baseline">Baseline <span data-role="baseline">&mdash;</span></p>
+          <p class="figure-hint">Mean absolute error of the pace delta. Lower is better.</p>
+        </article>
+        <article class="figure reveal" data-metric="rmse">
+          <h3>RMSE</h3>
+          <p class="figure-value" data-role="champion">&mdash;</p>
+          <p class="figure-baseline">Baseline <span data-role="baseline">&mdash;</span></p>
+          <p class="figure-hint">Root mean squared error, which punishes big misses. Lower is better.</p>
+        </article>
+        <article class="figure reveal" data-metric="r2">
+          <h3>R&sup2;</h3>
+          <p class="figure-value" data-role="champion">&mdash;</p>
+          <p class="figure-baseline">Baseline <span data-role="baseline">&mdash;</span></p>
+          <p class="figure-hint">Share of the variation in pace the model explains. Higher is better.</p>
+        </article>
+        <article class="figure reveal" data-metric="pairwise_acc">
+          <h3>Pairwise accuracy</h3>
+          <p class="figure-value" data-role="champion">&mdash;</p>
+          <p class="figure-baseline">Baseline <span data-role="baseline">&mdash;</span></p>
+          <p class="figure-hint">Pairs of drivers put in the right order. Higher is better.</p>
+        </article>
+      </div>
+      <h3 class="subhead">Error by race</h3>
+      <p class="legend"><span class="key champion">Champion</span> <span class="key baseline">Baseline</span> <span class="legend-note">MAE, champion / baseline</span></p>
+      <div id="results-by-race"></div>
+    </section>
+
+    <section id="race" class="reveal" aria-labelledby="race-title">
+      <p class="eyebrow">One race at a time</p>
+      <h2 id="race-title">Race</h2>
+      <div class="race-picker">
+        <label for="race-select">Race</label>
+        <select id="race-select"></select>
+      </div>
+      <p id="race-meta"></p>
+      <p id="race-late-note" class="late-note" hidden></p>
+      <p id="race-pending-note" class="late-note" hidden></p>
+      <div class="table-wrap">
+        <table id="race-table"></table>
+      </div>
+    </section>
+
+    <section id="scatter" class="reveal" aria-labelledby="scatter-title">
+      <p class="eyebrow">Each dot is a driver</p>
+      <h2 id="scatter-title">Predicted vs actual</h2>
+      <svg id="scatter-plot" viewBox="0 0 560 520" role="img" aria-label="Predicted against actual pace of each driver"></svg>
+      <p id="scatter-note"></p>
+    </section>
+
+    <section id="features" class="reveal" aria-labelledby="features-title" hidden>
+      <p class="eyebrow">What the model leans on</p>
+      <h2 id="features-title">Features</h2>
+      <p class="features-hint">How much the error (MAE) grows when a feature is shuffled, measured on the training rows. A longer bar means the model leans on that feature more.</p>
+      <div id="features-importance"></div>
+    </section>
+  </main>
+  <footer class="colophon">
+    <p>Predictions are made after Saturday qualifying, from Saturday data only. A <span class="late-mark">late</span> mark means the prediction was generated after the race had started. Race data: OpenF1.</p>
+    <p><a href="model.html">How the model works</a></p>
+  </footer>
+</body>
+</html>

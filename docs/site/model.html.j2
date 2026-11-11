@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>How the F1 race pace model works</title>
+  <meta name="description" content="What the model predicts, how it is measured and where it is limited.">
+  <link rel="preload" href="fonts/barlow-condensed-latin-700-normal.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="site.css">
+  <script src="site.js" defer></script>
+</head>
+<body class="model-page">
+  <header class="masthead">
+    <a class="wordmark" href="index.html">F1 race pace</a>
+    <a class="masthead-link" href="index.html">Back to the results</a>
+  </header>
+  <main>
+    <section id="model-summary" class="prose reveal" aria-label="Summary of the model card">
+{{ card_summary_html | safe }}
+    </section>
+    <details id="model-card-full" class="prose reveal">
+      <summary>Read the full model card</summary>
+{{ card_details_html | safe }}
+    </details>
+  </main>
+  <footer class="colophon">
+    <p><a href="index.html">Back to the results</a></p>
+  </footer>
+</body>
+</html>
