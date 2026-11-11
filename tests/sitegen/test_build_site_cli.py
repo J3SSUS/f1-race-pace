@@ -1,4 +1,5 @@
 import importlib.util
+import re
 from functools import partial
 from pathlib import Path
 
@@ -28,10 +29,11 @@ def test_it_writes_the_page_and_prints_how_to_serve_it(cli, root, tmp_path):
     out_dir = tmp_path / "out"
     code, lines = run(cli, "--output-dir", str(out_dir), reader=partial(read_inputs, root, ENV))
     assert code == 0
-    assert sorted(p.name for p in out_dir.iterdir()) == ["index.html", "model.html", "site.css", "site.js"]
-    assert [line for line in lines if line.startswith("wrote ")] == [
+    assert sorted(p.name for p in out_dir.iterdir()) == ["fonts", "index.html", "model.html", "site.css", "site.js"]
+    assert [line for line in lines if line.startswith("wrote ") and "fonts" not in line] == [
         f"wrote {out_dir / name}" for name in ("index.html", "model.html", "site.css", "site.js")
     ]
+    assert re.search(r"wrote .*fonts \(\d+ files\)", lines[-2])
     assert "python -m http.server -d" in lines[-1]
 
 

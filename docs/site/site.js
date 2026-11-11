@@ -374,6 +374,29 @@ function declutterLabels(boxes) {
   return new Set(kept.map((box) => box.key));
 }
 
+/* Where a point's label goes: above and to the right of the dot, below it if there is no room above, and to its left if
+   there is no room on the right. Returns the offset from the point (`x`, `y`, `anchor`) and the box it covers. */
+function placeLabel({ px, py, width, font, radius, bounds }) {
+  const gap = radius + 3;
+  let anchor = "start";
+  let left = px + gap;
+  if (left + width > bounds.width) {
+    anchor = "end";
+    left = px - gap - width;
+  }
+  let baseline = py - (radius + 1);
+  if (baseline - font < 0) baseline = py + radius + font;
+  return {
+    x: anchor === "start" ? gap : -gap,
+    y: baseline - py,
+    anchor,
+    left,
+    right: left + width,
+    top: baseline - font,
+    bottom: baseline + 0.2 * font,
+  };
+}
+
 /* ---- Hero and Results (DOM, checked by hand) ---- */
 
 function prefersReducedMotion() {
@@ -418,14 +441,18 @@ function renderByRace(container, model) {
   const list = el("ol", "race-bars");
   for (const race of model.byRace) {
     const item = el("li", "race-bar");
-    item.append(el("span", "race-label", `R${race.round} ${race.event_name}`));
+    item.append(
+      el("span", "race-label", `R${race.round} ${race.event_name}`),
+      el("span", "race-values", `${formatMetric("mae", race.champion)} / ${formatMetric("mae", race.baseline)}`),
+    );
+    const bars = el("span", "bars");
     for (const role of ["champion", "baseline"]) {
       const bar = el("span", `bar ${role}`);
       const value = race[role];
       bar.style.width = value === null || model.scale === 0 ? "0%" : `${(value / model.scale) * 100}%`;
-      item.append(bar);
+      bars.append(bar);
     }
-    item.append(el("span", "race-values", `${formatMetric("mae", race.champion)} / ${formatMetric("mae", race.baseline)}`));
+    item.append(bars);
     list.append(item);
   }
   container.append(list);
@@ -477,10 +504,12 @@ function renderFeatures(data, explain) {
   const list = el("ol", "feature-bars");
   for (const row of model.rows) {
     const item = el("li", "feature-bar");
+    const track = el("span", "track");
     const bar = el("span", "bar");
     bar.style.width = model.scale === 0 ? "0%" : `${(Math.max(0, row.mean) / model.scale) * 100}%`;
+    track.append(bar);
     const value = row.std === null ? formatMetric("mae", row.mean) : `${formatMetric("mae", row.mean)} \u00b1 ${formatMetric("mae", row.std)}`;
-    item.append(el("span", "feature-label", row.label), bar, el("span", "feature-value", value));
+    item.append(el("span", "feature-label", row.label), el("span", "feature-value", value), track);
     list.append(item);
   }
   holder.append(list);
@@ -498,11 +527,13 @@ function svgEl(tag, attributes = {}, text) {
   return node;
 }
 
+const labelText = (point) => (point.offScale ? `${point.driver} ${formatPace(point.y)}` : point.driver);
+
 function createScatter(svg, colors) {
   const axes = svgEl("g", { class: "axes" });
   const points = svgEl("g", { class: "points" });
   svg.replaceChildren(axes, points);
-  return { svg, axes, points, colors, byDriver: new Map(), revealed: false };
+  return { svg, axes, points, colors, byDriver: new Map(), revealed: false, rows: [], width: 0 };
 }
 
 /* Axes, grid and the diagonal (perfect prediction) for the domain of the race. */
@@ -520,7 +551,7 @@ function drawAxes(plot, model) {
     );
   }
   plot.axes.append(
-    svgEl("line", { class: "diagonal", x1: x(min), y1: y(min), x2: x(max), y2: y(max) }),
+    svgEl("line", { class: "diagonal", pathLength: 1, x1: x(min), y1: y(min), x2: x(max), y2: y(max) }),
     svgEl("text", { class: "axis-label", x: (PLOT.left + PLOT.width - PLOT.right) / 2, y: PLOT.height - 8, "text-anchor": "middle" }, "Predicted pace (%)"),
     svgEl("text", { class: "axis-label", transform: `translate(14 ${(PLOT.top + PLOT.height - PLOT.bottom) / 2}) rotate(-90)`, "text-anchor": "middle" }, "Actual pace (%)"),
   );
@@ -530,6 +561,15 @@ function drawAxes(plot, model) {
 /* Draw the points of a race. A driver already on the plot moves to the new position (a CSS transition on the
    transform); a new one appears in sequence; one that is not in the race leaves. */
 function updateScatter(plot, model) {
+  // Text and dots are sized in screen pixels: on a narrow screen the whole plot is scaled down, so they grow in
+  // plot units to stay readable.
+  const shownWidth = plot.svg.getBoundingClientRect().width;
+  const unit = shownWidth > 0 ? PLOT.width / shownWidth : 1;
+  const wide = shownWidth >= 700;
+  const font = (wide ? 13 : 11) * unit;
+  const dotRadius = (wide ? 7 : 5) * unit;
+  plot.svg.style.setProperty("--label-size", `${font.toFixed(1)}px`);
+  plot.svg.style.setProperty("--dot-r", `${dotRadius.toFixed(1)}px`);
   const scale = drawAxes(plot, model);
   const seen = new Set();
   model.points.forEach((point, index) => {
@@ -539,9 +579,9 @@ function updateScatter(plot, model) {
       group = svgEl("g", { class: "point", "data-driver": point.driver });
       group.style.transition = "none";
       group.append(
-        svgEl("circle", { class: "late-ring", r: 10 }),
-        svgEl("circle", { class: "dot", r: 6 }),
-        svgEl("text", { class: "point-label", x: 9, y: -7 }, point.driver),
+        svgEl("circle", { class: "late-ring" }),
+        svgEl("circle", { class: "dot" }),
+        svgEl("text", { class: "point-label" }, point.driver),
       );
       group.append(svgEl("title", {}, point.driver));
       plot.points.append(group);
@@ -556,7 +596,7 @@ function updateScatter(plot, model) {
     }
     group.classList.toggle("late", point.late);
     group.classList.toggle("offscale", point.offScale);
-    group.querySelector(".point-label").textContent = point.offScale ? `${point.driver} ${formatPace(point.y)}` : point.driver;
+    group.querySelector(".point-label").textContent = labelText(point);
     const color = teamColor(plot.colors, point.team);
     if (color) group.style.setProperty("--team", color);
     else group.style.removeProperty("--team");
@@ -565,20 +605,25 @@ function updateScatter(plot, model) {
   });
   // Labels that would overlap are hidden (the tooltip and the table still name every driver); the biggest errors and
   // the off-scale points keep theirs.
+  const placed = new Map(model.points.map((point) => [point.driver, placeLabel({
+    px: scale.x(point.plotX),
+    py: scale.y(point.plotY),
+    width: 0.62 * font * labelText(point).length,
+    font,
+    radius: dotRadius,
+    bounds: { width: PLOT.width - 2 },
+  })]));
+  for (const point of model.points) {
+    const place = placed.get(point.driver);
+    const label = plot.byDriver.get(point.driver).querySelector(".point-label");
+    label.setAttribute("x", place.x);
+    label.setAttribute("y", place.y);
+    label.setAttribute("text-anchor", place.anchor);
+  }
   const priority = (point) => (point.offScale ? Infinity : Math.abs(point.y - point.x));
-  const boxes = [...model.points].sort((a, b) => priority(b) - priority(a)).map((point) => {
-    const left = scale.x(point.plotX) + 9;
-    const width = 7 * (point.offScale ? `${point.driver} ${formatPace(point.y)}` : point.driver).length;
-    return { key: point.driver, left, right: left + width, top: scale.y(point.plotY) - 19, bottom: scale.y(point.plotY) - 5 };
-  });
+  const boxes = [...model.points].sort((a, b) => priority(b) - priority(a)).map((point) => ({ key: point.driver, ...placed.get(point.driver) }));
   const visible = declutterLabels(boxes);
   for (const point of model.points) plot.byDriver.get(point.driver).classList.toggle("label-hidden", !visible.has(point.driver));
-  for (const [driver, group] of plot.byDriver) {
-    if (seen.has(driver)) continue;
-    group.classList.add("leaving");
-    plot.byDriver.delete(driver);
-    setTimeout(() => group.classList.contains("leaving") && group.remove(), 500);
-  }
 }
 
 /* The points appear in sequence the first time the plot enters the view (at once if the browser cannot tell). */
@@ -601,6 +646,8 @@ function revealWhenVisible(plot, section) {
 }
 
 function showScatter(plot, note, rows) {
+  plot.rows = rows;
+  plot.width = plot.svg.getBoundingClientRect().width;
   const model = scatterModel(rows);
   updateScatter(plot, model);
   note.textContent = model.points.length === 0
@@ -610,6 +657,15 @@ function showScatter(plot, note, rows) {
       model.excluded ? `${model.excluded} without a reliable actual pace` : null,
       ...model.points.filter((p) => p.offScale).map((p) => `${p.driver} is off the scale (predicted ${formatPace(p.x)}, actual ${formatPace(p.y)}) and drawn on the edge`),
     ].filter(Boolean).join("; ") + ".";
+}
+
+/* The plot is redrawn when its width changes (a rotated phone, a resized window) so its text keeps its size. */
+function redrawOnResize(plot, note) {
+  if (typeof ResizeObserver !== "function") return;
+  new ResizeObserver(() => {
+    const width = plot.svg.getBoundingClientRect().width;
+    if (plot.rows.length > 0 && Math.abs(width - plot.width) > 1) showScatter(plot, note, plot.rows);
+  }).observe(plot.svg);
 }
 
 /* ---- Race section (DOM, checked by hand) ---- */
@@ -661,7 +717,10 @@ function renderRaceSection(data, colors) {
   const note = document.getElementById("scatter-note");
   const section = document.getElementById("scatter");
   const plot = svg && note && section ? createScatter(svg, colors) : null;
-  if (plot) revealWhenVisible(plot, section);
+  if (plot) {
+    revealWhenVisible(plot, section);
+    redrawOnResize(plot, note);
+  }
   const show = (key) => {
     const race = races.find((r) => raceKey(r.year, r.round) === key);
     const rows = raceRows(data, race.year, race.round);
@@ -676,15 +735,38 @@ function renderRaceSection(data, colors) {
   show(select.value);
 }
 
+/* ---- Entry animation fallback ---- */
+
+/* Browsers with scroll-driven animations (`animation-timeline: view()`) do this in CSS. For the others, the sections
+   below the fold are hidden until they scroll into view. Nothing is hidden up front, so a page whose script fails
+   stays readable, and nothing is hidden at all with reduced motion. */
+function initReveal() {
+  const driven = typeof CSS !== "undefined" && CSS.supports && CSS.supports("animation-timeline: view()");
+  if (driven || prefersReducedMotion() || typeof IntersectionObserver !== "function") return;
+  const observer = new IntersectionObserver((entries) => {
+    for (const entry of entries) {
+      if (!entry.isIntersecting) continue;
+      entry.target.classList.remove("pending");
+      observer.unobserve(entry.target);
+    }
+  }, { threshold: 0.1 });
+  for (const item of document.querySelectorAll(".reveal")) {
+    if (item.getBoundingClientRect().top <= window.innerHeight) continue;
+    item.classList.add("pending");
+    observer.observe(item);
+  }
+}
+
 if (typeof module !== "undefined" && module.exports) {
   module.exports = {
     loadData, describeSource, formatMetric, findChampion, findBaseline, normalizeLive,
     buildResultsModel, lastScoredRace, valueAt,
-    formatPace, teamColor, racesWithPredictions, raceRows, raceHeader, raceKey, niceTicks, scatterModel, declutterLabels, featuresModel, PAGE_SIZE,
+    formatPace, teamColor, racesWithPredictions, raceRows, raceHeader, raceKey, niceTicks, scatterModel, declutterLabels, placeLabel, featuresModel, PAGE_SIZE,
   };
 }
 
-/* Browser start: only the landing page (the one with the results) reads data. */
+/* Browser start: both pages animate their entry; only the landing page (the one with the results) reads data. */
+if (typeof document !== "undefined") initReveal();
 if (typeof document !== "undefined" && typeof SITE_CONFIG !== "undefined" && document.getElementById("results")) {
   loadData(SITE_CONFIG).then((result) => {
     window.siteData = result;

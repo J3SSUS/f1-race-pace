@@ -1,10 +1,11 @@
-"""Write the static site to `site/`: render `index.html` and `model.html`, and copy `site.css` and `site.js`.
+"""Write the static site to `site/`: render `index.html` and `model.html`, copy `site.css`, `site.js` and `fonts/`.
 
 `site.js` is the source file with `const SITE_CONFIG = {...};` put in front of it, so the source stays plain JavaScript
 that Node can test. Nothing here queries Supabase or reads the service key; it only writes what `SiteInputs` holds.
 """
 
 import json
+import shutil
 from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader, StrictUndefined, select_autoescape
@@ -33,6 +34,19 @@ def _site_config_js(inputs: SiteInputs) -> str:
     return f"const SITE_CONFIG = {json.dumps(config, indent=2, sort_keys=True, ensure_ascii=False)};\n\n"
 
 
+def _copy_fonts(source: Path, target: Path) -> list[Path]:
+    """The self-hosted fonts and their licenses, as they are: the page makes no request to a font service."""
+    if not source.is_dir():
+        return []
+    target.mkdir(parents=True, exist_ok=True)
+    copied = []
+    for font in sorted(source.iterdir()):
+        if font.is_file():
+            shutil.copyfile(font, target / font.name)
+            copied.append(target / font.name)
+    return copied
+
+
 def build_site(inputs: SiteInputs, out_dir: Path = OUT_DIR, source_dir: Path = SOURCE_DIR) -> list[Path]:
     """Write `index.html`, `model.html`, `site.css` and `site.js` to `out_dir`; the same inputs give the same bytes."""
     env = Environment(
@@ -53,4 +67,5 @@ def build_site(inputs: SiteInputs, out_dir: Path = OUT_DIR, source_dir: Path = S
         path = out_dir / name
         path.write_bytes(text.encode("utf-8"))
         written.append(path)
+    written.extend(_copy_fonts(source_dir / "fonts", out_dir / "fonts"))
     return written

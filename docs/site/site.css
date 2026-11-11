@@ -1,35 +1,223 @@
-/* Source of site/site.css. SPEC 16 step 12 writes the visual identity; until then, a readable default. */
-body { font-family: system-ui, sans-serif; margin: 0 auto; max-width: 60rem; padding: 0 1rem; }
-section[hidden], #notice[hidden] { display: none; }
-.figures { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr)); }
-.figure-value { font-size: 2.5rem; font-variant-numeric: tabular-nums; margin: 0; }
-.race-bars { list-style: none; padding: 0; }
-.race-bar { display: grid; gap: 0.25rem; grid-template-columns: 12rem 1fr 1fr auto; align-items: center; }
-.bar { background: currentColor; display: block; height: 0.6rem; }
-.bar.baseline { opacity: 0.4; }
+/* Source of site/site.css. Identity: a pit-wall timing screen. Color carries meaning, as it does on the timing
+   tower: purple is the champion, grey the baseline, green an improvement and the yellow flag a late prediction.
+   Every text color below is checked against its background in tests/site/js/contrast.test.mjs (4.5:1). */
 
-:root { --team-unknown: #8a8f98; }
-.swatch { background: var(--team, var(--team-unknown)); display: inline-block; height: 0.8rem; margin-right: 0.4rem; width: 0.8rem; }
-.pace { font-variant-numeric: tabular-nums; text-align: right; }
-.not-scored { opacity: 0.55; }
-.late-mark { border: 1px solid currentColor; border-radius: 0.2rem; font-size: 0.7rem; padding: 0 0.3rem; text-transform: uppercase; }
+@font-face { font-family: "Barlow Condensed"; font-weight: 600; font-display: swap; src: url("fonts/barlow-condensed-latin-600-normal.woff2") format("woff2"); }
+@font-face { font-family: "Barlow Condensed"; font-weight: 700; font-display: swap; src: url("fonts/barlow-condensed-latin-700-normal.woff2") format("woff2"); }
+@font-face { font-family: "Barlow"; font-weight: 400; font-display: swap; src: url("fonts/barlow-latin-400-normal.woff2") format("woff2"); }
+@font-face { font-family: "Barlow"; font-weight: 500; font-display: swap; src: url("fonts/barlow-latin-500-normal.woff2") format("woff2"); }
+@font-face { font-family: "JetBrains Mono"; font-weight: 500; font-display: swap; src: url("fonts/jetbrains-mono-latin-500-normal.woff2") format("woff2"); }
+@font-face { font-family: "JetBrains Mono"; font-weight: 700; font-display: swap; src: url("fonts/jetbrains-mono-latin-700-normal.woff2") format("woff2"); }
 
+:root {
+  --bg: #0b0d11;        /* asphalt */
+  --panel: #12151b;     /* pit wall */
+  --line: #262b35;      /* kerb */
+  --text: #e9ecf1;      /* chalk */
+  --muted: #98a2b3;     /* gantry */
+  --champion: #b36bff;  /* purple sector */
+  --good: #3ddc84;      /* green sector */
+  --flag: #ffd23f;      /* yellow flag */
+  --team-unknown: #8a8f98;
+
+  --display: "Barlow Condensed", "Arial Narrow", sans-serif;
+  --body: "Barlow", system-ui, sans-serif;
+  --data: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  --gutter: 1rem;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+html { color-scheme: dark; scroll-behavior: smooth; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--body);
+  font-size: 1.0625rem;
+  line-height: 1.55;
+  margin: 0;
+  min-height: 100vh;
+}
+/* a faint timing grid behind everything, fading out toward the bottom of the screen */
+body::before {
+  background-image: linear-gradient(var(--line) 1px, transparent 1px), linear-gradient(90deg, var(--line) 1px, transparent 1px);
+  background-size: 56px 56px;
+  content: "";
+  inset: 0;
+  mask-image: linear-gradient(to bottom, #000, transparent 70%);
+  opacity: 0.35;
+  pointer-events: none;
+  position: fixed;
+  z-index: -1;
+}
+a { color: var(--champion); text-underline-offset: 0.2em; }
+a:hover { color: var(--text); }
+:focus-visible { outline: 2px solid var(--flag); outline-offset: 3px; }
+[hidden] { display: none !important; }
+
+/* ---- notice and masthead ---- */
+#notice, .noscript { background: var(--flag); color: var(--bg); font-family: var(--data); font-size: 0.8rem; margin: 0; padding: 0.6rem var(--gutter); }
+.masthead {
+  align-items: center;
+  backdrop-filter: blur(10px);
+  background: color-mix(in srgb, var(--bg) 82%, transparent);
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  justify-content: space-between;
+  padding: 0.7rem var(--gutter);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+.wordmark { color: var(--text); font-family: var(--display); font-size: 1.15rem; font-weight: 700; letter-spacing: 0.08em; text-decoration: none; text-transform: uppercase; }
+.masthead-link { font-family: var(--data); font-size: 0.75rem; letter-spacing: 0.04em; text-transform: uppercase; }
+
+main { margin: 0 auto; max-width: 72rem; padding: 0 var(--gutter); }
+section { border-top: 1px solid var(--line); padding-block: clamp(2.5rem, 7vw, 5rem); }
+#hero { border-top: 0; padding-bottom: 0; padding-top: clamp(3rem, 10vw, 7rem); position: relative; }
+
+/* ---- type ---- */
+.eyebrow, .meta, .legend, th, .figure h3, .subhead, #race-meta, #scatter-note, .colophon, label, summary {
+  font-family: var(--data);
+  font-size: 0.75rem;
+  letter-spacing: 0.06em;
+}
+.eyebrow { color: var(--muted); margin: 0 0 0.75rem; text-transform: uppercase; }
+h1, h2 { font-family: var(--display); font-weight: 700; letter-spacing: 0.01em; margin: 0; text-transform: uppercase; }
+h1 { font-size: clamp(3rem, 11vw, 7.5rem); line-height: 0.9; max-width: 14ch; }
+h2 { font-size: clamp(2rem, 5vw, 3.2rem); line-height: 1; margin-bottom: 1.5rem; }
+.lede { color: var(--muted); font-size: clamp(1.05rem, 2.2vw, 1.3rem); margin: 1.5rem 0 0; max-width: 40rem; }
+.meta { color: var(--text); margin: 1.5rem 0 0; }
+.subhead { color: var(--muted); margin: 3rem 0 0.5rem; text-transform: uppercase; }
+
+/* ---- hero trace: the signature, a speed trace that draws itself ---- */
+.hero-trace { display: block; height: clamp(5rem, 14vw, 9rem); margin-top: 2.5rem; overflow: visible; width: 100%; }
+.hero-trace path { animation: draw 2.2s cubic-bezier(0.4, 0, 0.2, 1) 0.4s both; stroke-dasharray: 1; stroke-dashoffset: 0; }
+@keyframes draw { from { stroke-dashoffset: 1; } to { stroke-dashoffset: 0; } }
+@keyframes rise { from { opacity: 0; transform: translateY(1.5rem); } to { opacity: 1; transform: none; } }
+#hero > * { animation: rise 0.8s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
+#hero > .eyebrow { animation-delay: 0s; }
+#hero > h1 { animation-delay: 0.08s; }
+#hero > .lede { animation-delay: 0.2s; }
+#hero > .meta { animation-delay: 0.3s; }
+#hero > .hero-trace { animation: none; }
+
+/* ---- figures ---- */
+.figures { display: grid; gap: 1rem; grid-template-columns: 1fr; }
+@media (min-width: 34rem) { .figures { grid-template-columns: repeat(2, 1fr); } }
+@media (min-width: 62rem) { .figures { grid-template-columns: repeat(4, 1fr); } }
+.figure { background: var(--panel); border: 1px solid var(--line); border-top: 2px solid var(--champion); padding: 1.1rem 1.1rem 1.25rem; }
+.figure h3 { color: var(--muted); margin: 0; text-transform: uppercase; }
+.figure-value { color: var(--champion); font-family: var(--data); font-size: clamp(2.4rem, 5vw, 3.3rem); font-variant-numeric: tabular-nums; font-weight: 700; line-height: 1.1; margin: 0.5rem 0 0.25rem; }
+.figure-baseline { color: var(--muted); font-family: var(--data); font-size: 0.85rem; margin: 0; }
+.figure-baseline [data-role="baseline"] { color: var(--text); font-variant-numeric: tabular-nums; }
+.figure-hint { color: var(--muted); font-size: 0.9rem; line-height: 1.4; margin: 0.9rem 0 0; }
+
+/* ---- error by race ---- */
+.legend { color: var(--muted); display: flex; flex-wrap: wrap; gap: 1.25rem; margin: 0 0 1rem; }
+.legend .key::before { content: ""; display: inline-block; height: 0.5rem; margin-right: 0.5rem; width: 1.25rem; }
+.legend .champion::before { background: var(--champion); }
+.legend .baseline::before { background: var(--muted); }
+.legend-note { margin-left: auto; }
+.race-bars, .feature-bars { list-style: none; margin: 0; padding: 0; }
+.race-bar { display: grid; gap: 0.3rem 1rem; grid-template-columns: 1fr auto; padding: 0.45rem 0; }
+.race-label { font-size: 0.95rem; }
+.race-values { color: var(--muted); font-family: var(--data); font-size: 0.8rem; font-variant-numeric: tabular-nums; }
+.bars { display: grid; gap: 3px; grid-column: 1 / -1; }
+.bars .bar { display: block; height: 6px; }
+.bars .bar.champion { background: var(--champion); }
+.bars .bar.baseline { background: var(--muted); height: 4px; }
+.bar { transform-origin: left center; }
+
+/* ---- race table, a timing tower ---- */
+.race-picker { align-items: center; display: flex; flex-wrap: wrap; gap: 0.75rem; margin-bottom: 1rem; }
+label { color: var(--muted); text-transform: uppercase; }
+select { background: var(--panel); border: 1px solid var(--line); color: var(--text); font: 500 0.95rem var(--body); max-width: 100%; padding: 0.55rem 0.8rem; }
+#race-meta { color: var(--text); margin: 0 0 1rem; }
+.table-wrap { overflow-x: auto; }
+#race-table { border-collapse: collapse; width: 100%; }
+th { color: var(--muted); font-weight: 500; padding: 0.5rem 0.75rem; text-align: left; text-transform: uppercase; }
+th:nth-child(n + 3) { text-align: right; }
+td { border-top: 1px solid var(--line); padding: 0.55rem 0.75rem; white-space: nowrap; }
+tbody tr:hover { background: var(--panel); }
+.driver { font-family: var(--data); font-weight: 700; letter-spacing: 0.04em; }
+.pace { font-family: var(--data); font-size: 0.92rem; font-variant-numeric: tabular-nums; text-align: right; }
+.swatch { background: var(--team, var(--team-unknown)); display: inline-block; height: 1.15em; margin-right: 0.65rem; vertical-align: -0.2em; width: 4px; }
+tr.not-scored td { color: var(--muted); }
+tr.not-scored .swatch { opacity: 0.5; }
+.late-mark { align-items: center; color: var(--flag); display: inline-flex; font-family: var(--data); font-size: 0.65rem; font-weight: 500; gap: 0.3rem; letter-spacing: 0.08em; margin-left: 0.35rem; text-transform: uppercase; }
+.late-mark::before { background: var(--flag); content: ""; display: inline-block; height: 0.55rem; width: 0.4rem; }
+/* on a narrow screen the table keeps the flag and drops the word, so the Actual column stays in view */
+@media (max-width: 34rem) {
+  #race-table td, #race-table th { padding-left: 0.4rem; padding-right: 0.4rem; }
+  #race-table td.team { line-height: 1.25; white-space: normal; }
+  #race-table .late-mark { font-size: 0; gap: 0; margin-left: 0.3rem; }
+}
+
+/* ---- scatter ---- */
 #scatter-plot { display: block; height: auto; max-width: 100%; width: 100%; }
-#scatter-plot .grid { stroke: currentColor; stroke-opacity: 0.12; }
-#scatter-plot .grid.zero { stroke-opacity: 0.4; }
-#scatter-plot .diagonal { stroke: currentColor; stroke-dasharray: 4 4; stroke-opacity: 0.5; }
-#scatter-plot .tick, #scatter-plot .axis-label, #scatter-plot .point-label { fill: currentColor; font-size: 12px; }
+#scatter-plot .grid { stroke: var(--line); }
+#scatter-plot .grid.zero { stroke: var(--muted); stroke-opacity: 0.6; }
+#scatter-plot .diagonal { stroke: var(--text); stroke-opacity: 0.45; }
+#scatter-plot .tick, #scatter-plot .axis-label { fill: var(--muted); font-family: var(--data); font-size: var(--label-size, 11px); }
+#scatter-plot .point-label { fill: var(--text); font-family: var(--data); font-size: var(--label-size, 11px); }
 #scatter-plot .point { opacity: 0; transition: transform 0.6s ease, opacity 0.4s ease calc(var(--i, 0) * 40ms); }
 #scatter-plot.revealed .point { opacity: 1; }
 #scatter-plot .point.leaving { opacity: 0; transition-delay: 0s; }
-#scatter-plot .dot { fill: var(--team, var(--team-unknown)); }
-#scatter-plot .late-ring { display: none; fill: none; stroke: var(--team, var(--team-unknown)); stroke-dasharray: 3 2; }
+#scatter-plot .dot { fill: var(--team, var(--team-unknown)); r: var(--dot-r, 6px); }
+#scatter-plot .late-ring { display: none; fill: none; r: calc(var(--dot-r, 6px) + 4px); stroke: var(--flag); stroke-dasharray: 3 2; stroke-opacity: 0.85; }
 #scatter-plot .point.late .late-ring { display: inline; }
-@media (prefers-reduced-motion: reduce) { #scatter-plot .point { opacity: 1; transition: none; } }
 #scatter-plot .point.label-hidden .point-label { display: none; }
-#scatter-plot .point.offscale .dot { stroke: currentColor; stroke-width: 2; }
-.feature-bars { list-style: none; padding: 0; }
-.feature-bar { display: grid; gap: 0.5rem; grid-template-columns: 12rem 1fr 9rem; align-items: center; }
-.feature-bar .bar { background: currentColor; display: block; height: 0.6rem; }
-.feature-value { font-variant-numeric: tabular-nums; text-align: right; }
-.features-notice { font-style: italic; }
+#scatter-plot .point.offscale .dot { stroke: var(--text); stroke-width: 2; }
+#scatter-note { color: var(--muted); margin: 0.75rem 0 0; }
+
+/* ---- features ---- */
+.features-hint { color: var(--muted); margin: 0 0 1.5rem; max-width: 40rem; }
+.features-notice { color: var(--flag); font-family: var(--data); font-size: 0.85rem; }
+.feature-bar { align-items: center; display: grid; gap: 0.2rem 1rem; grid-template-columns: 1fr auto; padding: 0.4rem 0; }
+.feature-label { font-size: 0.95rem; text-transform: capitalize; }
+.feature-value { color: var(--muted); font-family: var(--data); font-size: 0.8rem; font-variant-numeric: tabular-nums; }
+.track { background: var(--line); display: block; grid-column: 1 / -1; height: 6px; }
+.track .bar { background: var(--champion); display: block; height: 100%; }
+@media (min-width: 40rem) {
+  .feature-bar { grid-template-columns: 12rem 1fr 9rem; }
+  .track { grid-column: auto; }
+  .feature-value { text-align: right; }
+}
+
+/* ---- the model page ---- */
+.prose { max-width: 48rem; }
+.prose h1 { font-size: clamp(2.2rem, 7vw, 4rem); max-width: none; }
+.prose h2 { font-size: clamp(1.5rem, 4vw, 2.1rem); margin: 2.5rem 0 0.75rem; }
+.prose p, .prose li { color: var(--text); }
+.prose table { border-collapse: collapse; display: block; font-size: 0.9rem; overflow-x: auto; }
+.prose th, .prose td { border-top: 1px solid var(--line); text-align: left; white-space: normal; }
+.prose img { background: #fff; border-radius: 0.3rem; display: block; height: auto; margin: 1rem 0; max-width: 100%; padding: 0.5rem; }
+.prose code { background: var(--panel); font-family: var(--data); font-size: 0.85em; padding: 0.1em 0.35em; }
+.model-page section.prose { border-top: 0; padding-bottom: 1rem; }
+details.prose { border-top: 1px solid var(--line); padding: 1.5rem 0 4rem; }
+summary { background: var(--panel); border: 1px solid var(--line); color: var(--text); cursor: pointer; display: inline-block; padding: 0.7rem 1rem; text-transform: uppercase; }
+summary:hover { border-color: var(--champion); }
+details[open] > summary { margin-bottom: 1rem; }
+
+.colophon { border-top: 1px solid var(--line); color: var(--muted); margin: 0 auto; max-width: 72rem; padding: 2rem var(--gutter) 3rem; }
+.colophon p { margin: 0 0 0.75rem; max-width: 42rem; }
+
+/* ---- motion: sections and bars enter as they scroll into view ---- */
+.reveal { transition: opacity 0.7s ease, transform 0.7s ease; }
+.reveal.pending { opacity: 0; transform: translateY(1.5rem); }
+.reveal .bar { transition: transform 0.9s cubic-bezier(0.2, 0.7, 0.2, 1) 0.15s; }
+.reveal.pending .bar { transform: scaleX(0); }
+@supports (animation-timeline: view()) {
+  .reveal { animation: rise linear both; animation-range: entry 0% entry 55%; animation-timeline: view(); transition: none; }
+  .reveal .bar { animation: grow linear both; animation-range: entry 0% entry 90%; animation-timeline: view(); transition: none; }
+  #scatter-plot .diagonal { animation: draw linear both; animation-range: entry 10% cover 50%; animation-timeline: view(); stroke-dasharray: 1; }
+}
+@keyframes grow { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+  .reveal.pending, .reveal.pending .bar { opacity: 1; transform: none; }
+  #scatter-plot .point { opacity: 1; }
+  .hero-trace path { stroke-dashoffset: 0; }
+}

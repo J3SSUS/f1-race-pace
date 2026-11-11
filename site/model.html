@@ -3,15 +3,20 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
   <title>How the F1 race pace model works</title>
   <meta name="description" content="What the model predicts, how it is measured and where it is limited.">
+  <link rel="preload" href="fonts/barlow-condensed-latin-700-normal.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="site.css">
   <script src="site.js" defer></script>
 </head>
-<body>
+<body class="model-page">
+  <header class="masthead">
+    <a class="wordmark" href="index.html">F1 race pace</a>
+    <a class="masthead-link" href="index.html">Back to the results</a>
+  </header>
   <main>
-    <p><a href="index.html">Back to the results</a></p>
-    <section id="model-summary" aria-label="Summary of the model card">
+    <section id="model-summary" class="prose reveal" aria-label="Summary of the model card">
 <h1>Model card: f1-race-pace, version 4 (ridge)</h1>
 <p>2026-11-02 · explain run d5bb2da8b777423eb46c949c88b44739 · evaluate run 100bba09a6604cf895095eb3143b4e30 · sampling run e64c04d8897c44d283da0422f2e818ce</p>
 <h2>1. What it predicts</h2>
@@ -54,7 +59,7 @@ winner or a podium. The test result in part one shows how much it improves on th
 </tbody>
 </table>
     </section>
-    <details id="model-card-full">
+    <details id="model-card-full" class="prose reveal">
       <summary>Read the full model card</summary>
 <h2>2. What weighs most</h2>
 <p>Importance describes how this model uses each feature, not how much the feature matters for racing: correlated features share their importance, and a feature that looks unimportant here can still matter in the world. Permutation importance is the increase in MAE on the training rows when the feature is shuffled, so it is optimistic compared with held-out data. Mean |SHAP| is the average size of the feature's contribution to the prediction.</p>
@@ -553,5 +558,8 @@ later, in the walk-forward backtest over the 2026 season. Until then, treat pred
 </ul>
     </details>
   </main>
+  <footer class="colophon">
+    <p><a href="index.html">Back to the results</a></p>
+  </footer>
 </body>
 </html>

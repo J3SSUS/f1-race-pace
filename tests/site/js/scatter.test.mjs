@@ -4,7 +4,7 @@ import { createRequire } from "node:module";
 import test from "node:test";
 
 const require = createRequire(import.meta.url);
-const { niceTicks, scatterModel, declutterLabels, raceRows } = require("../../../docs/site/site.js");
+const { niceTicks, scatterModel, declutterLabels, placeLabel, raceRows } = require("../../../docs/site/site.js");
 
 const SNAPSHOT = JSON.parse(readFileSync(new URL("../sample_snapshot.json", import.meta.url), "utf8"));
 const DATA = { results: SNAPSHOT.results };
@@ -128,4 +128,33 @@ test("labels that overlap are dropped in favor of the earlier one, and the other
 
 test("boxes that only touch do not overlap", () => {
   assert.deepEqual([...declutterLabels([box("A", 0, 0), box("B", 20, 0), box("C", 0, 14)])], ["A", "B", "C"]);
+});
+
+const PLACE = { width: 30, font: 11, radius: 5, bounds: { width: 560 } };
+
+test("a label goes above and to the right of its dot when there is room", () => {
+  const place = placeLabel({ px: 200, py: 200, ...PLACE });
+  assert.equal(place.anchor, "start");
+  assert.equal(place.x, 8);
+  assert.ok(place.y < 0);
+  assert.ok(place.left > 200 && place.bottom < 200 + 5);
+});
+
+test("a label that would leave the plot on the right goes to the left of its dot", () => {
+  const place = placeLabel({ px: 545, py: 200, ...PLACE });
+  assert.equal(place.anchor, "end");
+  assert.equal(place.x, -8);
+  assert.ok(place.right < 545 && place.right <= 560);
+});
+
+test("a label with no room above goes below its dot", () => {
+  const place = placeLabel({ px: 200, py: 10, ...PLACE });
+  assert.ok(place.y > 0);
+  assert.ok(place.top >= 0);
+});
+
+test("a point in the top right corner gets a label below and to the left", () => {
+  const place = placeLabel({ px: 550, py: 8, ...PLACE });
+  assert.equal(place.anchor, "end");
+  assert.ok(place.y > 0 && place.right <= 560 && place.top >= 0);
 });

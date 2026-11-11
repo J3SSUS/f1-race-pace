@@ -28,10 +28,23 @@ def site_config(js):
     return json.loads(head.removeprefix("const SITE_CONFIG = ").removesuffix(";"))
 
 
-def test_it_writes_the_four_files(tmp_path):
+def test_it_writes_the_four_files_and_the_fonts(tmp_path):
     written = build_site(make_inputs(), tmp_path)
-    assert [p.name for p in written] == ["index.html", "model.html", "site.css", "site.js"]
+    assert [p.name for p in written[:4]] == ["index.html", "model.html", "site.css", "site.js"]
     assert all(p.is_file() for p in written)
+    fonts = sorted(p.name for p in (tmp_path / "fonts").iterdir())
+    assert fonts == sorted(p.name for p in (SOURCE_DIR / "fonts").iterdir())
+    assert sum(name.endswith(".woff2") for name in fonts) == 6
+    assert all((tmp_path / "fonts" / name).read_bytes() == (SOURCE_DIR / "fonts" / name).read_bytes() for name in fonts)
+
+
+def test_every_font_the_css_asks_for_is_in_the_build(tmp_path):
+    build_site(make_inputs(), tmp_path)
+    css = (tmp_path / "site.css").read_text()
+    urls = re.findall(r'url\("(fonts/[^"]+)"\)', css)
+    assert len(urls) == 6
+    assert all((tmp_path / url).is_file() for url in urls)
+    assert not re.search(r"url\((?!\"fonts/)", css)  # no other url(): nothing is fetched from elsewhere
 
 
 def test_the_landing_has_its_five_sections_in_order(tmp_path):
@@ -52,7 +65,7 @@ def test_the_model_page_shows_the_summary_and_folds_the_rest(tmp_path):
     build_site(make_inputs(), tmp_path)
     html = (tmp_path / "model.html").read_text()
     assert "<h1>Card</h1><p>Summary</p>" in html  # inserted unescaped
-    details = html[html.index('<details id="model-card-full">') :]
+    details = html[html.index('<details id="model-card-full"') :]
     assert "<summary>Read the full model card</summary>" in details
     assert "<h2>2. Results</h2><p>Details</p>" in details
     assert "Summary</p>" not in details
@@ -63,7 +76,7 @@ def test_the_model_page_shows_the_summary_and_folds_the_rest(tmp_path):
 @pytest.mark.parametrize("name", ["index.html.j2", "model.html.j2"])
 def test_the_templates_hold_no_figure(name):
     template = (SOURCE_DIR / name).read_text()
-    text = re.sub(r"<[^>]*>|\{\{.*?\}\}", "", template.split("<body>", 1)[1])  # the visible text, no tags or variables
+    text = re.sub(r"<[^>]*>|\{\{.*?\}\}", "", template.split("<body", 1)[1])  # the visible text, no tags or variables
     assert not re.search(r"(?<![A-Za-z])\d", text)  # no figure; the '1' of "F1" is part of a word
 
 

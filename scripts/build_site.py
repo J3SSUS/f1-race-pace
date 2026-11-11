@@ -44,8 +44,11 @@ def main(
     except (ValueError, TemplateError, OSError) as exc:
         out(f"STOPPED: {exc}")
         return 1
-    for path in written:
+    pages = [path for path in written if path.parent == args.output_dir]
+    for path in pages:
         out(f"wrote {shown(path)}")
+    if len(pages) < len(written):
+        out(f"wrote {shown(args.output_dir / 'fonts')} ({len(written) - len(pages)} files)")
     out(f"serve it with: python -m http.server -d {shown(args.output_dir)}  (then open http://localhost:8000)")
     return 0
 
