@@ -101,8 +101,9 @@ const SITE_CONFIG = {
 
 /* Source of site/site.js. The generator puts `const SITE_CONFIG = {...};` before this file (see src/sitegen/build.py).
    Data access (SPEC 16 step 6): the page reads Supabase with `fetch` and the anon key and, if any read fails or takes
-   longer than `timeoutMs`, switches to `snapshot.json` as a whole, never a mix. Steps 7 to 12 add the formatting, the
-   sections and the motion. */
+   longer than `timeoutMs`, switches to `snapshot.json` as a whole, never a mix. Both sources end in the same shape
+   (`{ champion, baseline, races, metrics, results }`, the snapshot of the data model), so one rendering code serves
+   both. Step 7 adds the formatting and the champion and baseline lookup; steps 8 to 12 the sections and the motion. */
 "use strict";
 
 const PAGE_SIZE = 1000; // PostgREST returns at most 1,000 rows per request by default
@@ -200,17 +201,65 @@ async function loadSnapshot(config, fetchFn, reason) {
         config.timeoutMs, "snapshot", [200],
       ),
     );
-    return { source: "snapshot", reason, generatedAt: snapshot.generated_at, snapshot };
+    const { champion, baseline, races, metrics, results } = snapshot;
+    return { source: "snapshot", reason, generatedAt: snapshot.generated_at, data: { champion, baseline, races, metrics, results } };
   } catch (error) {
     return { source: "none", reason: `${reason}; ${error.message}` };
   }
 }
 
-/* The data of the page: `{ source: "live", rows }`, `{ source: "snapshot", generatedAt, snapshot }` or
-   `{ source: "none" }` when neither is usable. It never mixes the two sources and never throws. */
+/* Numbers shown on the page. A missing value is an em dash, never a 0 that looks like a result. */
+const METRIC_DECIMALS = { mae: 3, rmse: 3, r2: 3, pairwise_acc: 3 };
+
+function formatMetric(name, value) {
+  if (!(name in METRIC_DECIMALS)) throw new Error(`unknown metric ${name}`);
+  if (typeof value !== "number" || !Number.isFinite(value)) return "\u2014";
+  const text = value.toFixed(METRIC_DECIMALS[name]);
+  return /^-0\.0+$/.test(text) ? text.slice(1) : text; // a tiny negative rounds to "0.000", not "-0.000"
+}
+
+/* The champion is the `champion_history` row with no `demoted_at`; its algorithm comes from `model_versions`. */
+function findChampion(championHistory, modelVersions) {
+  const current = championHistory.filter((row) => row.demoted_at == null);
+  if (current.length !== 1) {
+    throw new Error(`champion_history: expected one current champion, found ${current.length}`);
+  }
+  const id = current[0].model_version_id;
+  const version = modelVersions.find((row) => row.model_version_id === id);
+  if (!version) throw new Error(`model_versions: no row for the champion (version ${id})`);
+  return { model_version_id: id, algorithm: version.algorithm, promoted_at: current[0].promoted_at };
+}
+
+/* The baseline is the `model_versions` row with `algorithm = 'baseline'` that has walk-forward metrics; if several
+   have them, the newest, as `find_baseline` does in SPEC 14. */
+function findBaseline(modelVersions, metrics) {
+  const scored = new Set(metrics.map((row) => row.model_version_id));
+  const candidates = modelVersions.filter((row) => row.algorithm === "baseline" && scored.has(row.model_version_id));
+  if (candidates.length === 0) throw new Error("model_versions: no baseline version has walk_forward metrics");
+  const newest = candidates.reduce((a, b) => (b.model_version_id > a.model_version_id ? b : a));
+  return { model_version_id: newest.model_version_id, algorithm: "baseline" };
+}
+
+/* The live rows in the shape of the snapshot: the champion, the baseline and only their metrics. */
+function normalizeLive(rows) {
+  const champion = findChampion(rows.championHistory, rows.modelVersions);
+  const baseline = findBaseline(rows.modelVersions, rows.metrics);
+  const scored = new Set([champion.model_version_id, baseline.model_version_id]);
+  return {
+    champion,
+    baseline,
+    races: rows.races,
+    metrics: rows.metrics.filter((row) => scored.has(row.model_version_id)),
+    results: rows.results,
+  };
+}
+
+/* The data of the page: `{ source: "live", data }`, `{ source: "snapshot", generatedAt, data }` or `{ source: "none" }`
+   when neither is usable. `data` has the same shape in both. It never mixes the two sources and never throws; live
+   rows that do not add up (for example, no baseline with metrics) count as a failed read. */
 async function loadData(config, fetchFn = globalThis.fetch.bind(globalThis)) {
   try {
-    return { source: "live", rows: await loadLive(config, fetchFn) };
+    return { source: "live", data: normalizeLive(await loadLive(config, fetchFn)) };
   } catch (error) {
     return loadSnapshot(config, fetchFn, error.message);
   }
@@ -226,7 +275,7 @@ function describeSource(result) {
 }
 
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { loadData, describeSource, PAGE_SIZE };
+  module.exports = { loadData, describeSource, formatMetric, findChampion, findBaseline, normalizeLive, PAGE_SIZE };
 }
 
 /* Browser start: only the landing page (the one with the results) reads data. */

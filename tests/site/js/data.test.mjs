@@ -27,9 +27,17 @@ function makeFetch(overrides = {}) {
   const calls = [];
   const handlers = {
     champion_history: () => json([{ model_version_id: 4, promoted_at: "2026-11-02" }]),
-    model_versions: () => json([{ model_version_id: 4, algorithm: "ridge", is_shadow: false }]),
+    model_versions: () =>
+      json([
+        { model_version_id: 3, algorithm: "baseline", is_shadow: false },
+        { model_version_id: 4, algorithm: "ridge", is_shadow: false },
+      ]),
     races: () => json([{ race_id: 89, year: 2026, round: 17, event_name: "X", race_date: "2026-11-08" }]),
-    metrics: () => json([{ model_version_id: 4, race_id: null, metric_name: "mae", value: 0.55 }]),
+    metrics: () =>
+      json([
+        { model_version_id: 4, race_id: null, metric_name: "mae", value: 0.55 },
+        { model_version_id: 3, race_id: null, metric_name: "mae", value: 0.73 },
+      ]),
     prediction_results: () => json([row(0)]),
     "snapshot.json": () => json(SNAPSHOT),
     ...overrides,
@@ -43,11 +51,13 @@ function makeFetch(overrides = {}) {
   return fetchFn;
 }
 
-test("with every read working it returns live rows from the five reads", async () => {
+test("with every read working it returns live data in the shape of the snapshot", async () => {
   const fetchFn = makeFetch();
   const result = await loadData(CONFIG, fetchFn);
   assert.equal(result.source, "live");
-  assert.deepEqual(Object.keys(result.rows).sort(), ["championHistory", "metrics", "modelVersions", "races", "results"]);
+  assert.deepEqual(Object.keys(result.data).sort(), ["baseline", "champion", "metrics", "races", "results"]);
+  assert.equal(result.data.champion.algorithm, "ridge");
+  assert.equal(result.data.baseline.model_version_id, 3);
   assert.equal(describeSource(result), null);
   assert.ok(!fetchFn.calls.some((c) => c.name === "snapshot.json"), "the snapshot is not read when live works");
 });
@@ -76,9 +86,9 @@ test("a table over 1,000 rows is read in pages until a short page and returns ev
   });
   const result = await loadData(CONFIG, fetchFn);
   assert.equal(result.source, "live");
-  assert.equal(result.rows.results.length, 2500);
+  assert.equal(result.data.results.length, 2500);
   assert.deepEqual(ranges, ["0-999", "1000-1999", "2000-2999"]);
-  assert.equal(result.rows.results[2499].driver, "D2499");
+  assert.equal(result.data.results[2499].driver, "D2499");
 });
 
 test("a table that is an exact multiple of the page size ends on an empty or 416 page", async () => {
@@ -90,7 +100,7 @@ test("a table that is an exact multiple of the page size ends on an empty or 416
       makeFetch({ prediction_results: () => (page++ === 0 ? json(rows, 206) : last()) }),
     );
     assert.equal(result.source, "live");
-    assert.equal(result.rows.results.length, PAGE_SIZE);
+    assert.equal(result.data.results.length, PAGE_SIZE);
   }
 });
 
@@ -98,7 +108,13 @@ test("one failing read sends the whole page to the snapshot, never a mix", async
   const result = await loadData(CONFIG, makeFetch({ races: () => json({ message: "boom" }, 500) }));
   assert.equal(result.source, "snapshot");
   assert.equal(result.generatedAt, SNAPSHOT.generated_at);
-  assert.equal(result.rows, undefined);
+  assert.deepEqual(result.data, {
+    champion: SNAPSHOT.champion,
+    baseline: SNAPSHOT.baseline,
+    races: SNAPSHOT.races,
+    metrics: SNAPSHOT.metrics,
+    results: SNAPSHOT.results,
+  });
   assert.match(result.reason, /races: HTTP 500/);
   assert.match(describeSource(result), /2026-11-10T21:00:00Z/);
 });
@@ -163,4 +179,13 @@ test("the snapshot reason keeps the live failure and the notice never shows the 
   const result = await loadData(CONFIG, makeFetch({ races: () => json({}, 503) }));
   assert.ok(!describeSource(result).includes(ANON_KEY));
   assert.match(describeSource(result), /^Live data is unavailable \(races: HTTP 503\)\./);
+});
+
+test("live rows with no baseline that has metrics count as a failed read: the snapshot is used", async () => {
+  const result = await loadData(
+    CONFIG,
+    makeFetch({ metrics: () => json([{ model_version_id: 4, race_id: null, metric_name: "mae", value: 0.55 }]) }),
+  );
+  assert.equal(result.source, "snapshot");
+  assert.match(result.reason, /no baseline version has walk_forward metrics/);
 });
