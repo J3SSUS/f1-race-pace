@@ -4,7 +4,7 @@
 > **Depends on:** SPEC 05 (feature store load), SPEC 11 (the champion's charts), SPEC 12 (model card), SPEC 14 (prediction script), SPEC 15 (walk-forward metrics)
 > **Backlog:** Phase 7 of `docs/backlog.md`: "Generator", "Data access", "Sections" and "Late predictions". "`publish` script" and "Verify drift and other monitoring data are not exposed" move to SPEC 17
 > **Date:** 2026-11-10
-> **Objective:** Add a generator that writes a self-contained, single-page static site in `site/` with a telemetry-style visual identity and animated figures (results, features, predicted vs actual, the model's explanation and the late-prediction mark), which reads Supabase from the browser with the anon key, falls back to a `snapshot.json` with a visible notice, and renders locally.
+> **Objective:** Add a generator that writes a self-contained static site in `site/` (a landing page and a model page) with a telemetry-style visual identity and animated figures (results, features, predicted vs actual, the model's explanation and the late-prediction mark), which reads Supabase from the browser with the anon key, falls back to a `snapshot.json` with a visible notice, and renders locally.
 
 ---
 
@@ -12,14 +12,15 @@
 
 **In:**
 
-- A new module `src/sitegen/` with the generator and `scripts/build_site.py`, a thin CLI that writes `site/index.html`, `site/site.css`, `site/site.js` and `site/fonts/`, and prints what it wrote. The source templates live in `docs/site/` (`index.html.j2`, `site.css`, `site.js` and the font files). Jinja2 renders with `StrictUndefined`, so a missing value raises.
-- One page, `site/index.html`, with these sections in order:
+- A new module `src/sitegen/` with the generator and `scripts/build_site.py`, a thin CLI that writes `site/index.html`, `site/model.html`, `site/site.css`, `site/site.js` and `site/fonts/`, and prints what it wrote. The source templates live in `docs/site/` (`index.html.j2`, `model.html.j2`, `site.css`, `site.js` and the font files). Jinja2 renders with `StrictUndefined`, so a missing value raises.
+- The landing page, `site/index.html`, with these sections in order:
   1. **Hero:** the title, the champion's model version and the date of the last race with ground truth.
   2. **Results:** MAE, RMSE, R² and pairwise accuracy of the champion against the baseline (the `walk_forward` aggregate of `metrics`), plus the per-race MAE.
   3. **Race:** a race selector (default: the latest race with a prediction) and, for that race, a table with one row per driver and the predicted and actual pace.
   4. **Predicted vs actual:** an SVG scatter plot drawn in JavaScript for the selected race. Its points are drawn in sequence and move to their new position when the race changes.
   5. **Features:** the champion's features and their permutation importance, read from `site/charts/explain.json` (SPEC 11).
-  6. **Explanation:** the text of `MODEL_CARD.md` rendered with Python's Markdown library, and the SPEC 11 `.svg` charts linked by relative path.
+  6. **Model link:** a link to `model.html` ("How the model works"). The landing holds no text of the model card.
+- The model page, `site/model.html`: the opening of `MODEL_CARD.md` and its first `##` section visible, and the rest of the card inside a closed `<details>` ("Read the full model card"), rendered with Python's Markdown library, with the SPEC 11 `.svg` charts linked by relative path and a link back to the landing. It needs no Supabase data.
 - **Late predictions:** a prediction with `is_late = true` shows a visible mark in the table, in the scatter plot and in the race header.
 - **Data access:** `site.js` reads Supabase from the browser with `fetch` to the PostgREST API (no library), using the anon key and only the public tables and views: `prediction_results`, `metrics`, `races`, `model_versions` and `champion_history`. It identifies the champion through `champion_history` and `model_versions`. If any query fails or takes more than 8 seconds, the page switches to `snapshot.json` as a whole (never a mix) and shows a notice with the snapshot date. The snapshot format is defined here, the script that writes it is SPEC 17, and this spec tests the fallback with a sample snapshot in `tests/`.
 - **Credentials:** the generator reads `SUPABASE_URL` and `SUPABASE_ANON_KEY` from the environment or `.env` and writes them into `site.js`. It never reads `SUPABASE_SERVICE_KEY`, and a test checks that the key does not appear in any file of `site/`.
@@ -39,7 +40,7 @@
 - A framework or a JavaScript library (React, D3, Chart.js, `supabase-js`) and a bundler.
 - Any change to the Supabase schema, the RLS policies, `config/features.yml`, `config/training.json` or `pyproject.toml`.
 - Regenerating the SPEC 11 charts or `MODEL_CARD.md`: the generator only reads them.
-- Pages other than `index.html` and a dark/light theme switch.
+- Pages other than `index.html` and `model.html`, and a dark/light theme switch.
 
 ---
 
@@ -106,17 +107,17 @@ Conventions:
 
 Each step leaves `uv run pytest tests` green and can be committed on its own. The Python goes in `src/sitegen/`, the CLI in `scripts/build_site.py`, the sources of the page in `docs/site/` and the tests in `tests/sitegen/` (Python) and `tests/site/js/` (Node's built-in runner, `node --test`). From step 5 on, each step also leaves `site/` openable in a browser.
 
-1. **Decisions.** Add the SPEC 16 section to `DECISIONS.md`: the page is one self-contained `index.html` with no library and no CDN, the browser reads Supabase with `fetch` and the anon key, the snapshot is all-or-nothing with a visible notice, `schema_version` 1, the team colors in `config/team_colors.json` and the generator never reads the service key. Check: the lines exist and no frozen contract changes.
+1. **Decisions.** Add the SPEC 16 section to `DECISIONS.md`: the site is two self-contained pages (`index.html` and `model.html`) with no library and no CDN, the browser reads Supabase with `fetch` and the anon key, the snapshot is all-or-nothing with a visible notice, `schema_version` 1, the team colors in `config/team_colors.json` and the generator never reads the service key. Check: the lines exist and no frozen contract changes.
 2. **Team colors.** Create `config/team_colors.json` with the 12 names of `teams.name` and a loader `load_team_colors` in `src/sitegen/inputs.py`. Check: a test fails if a name is missing, if a value is not `#RRGGBB`, or if a target of the `config/teams.yml` aliases has no color.
-3. **The inputs of the page.** In `src/sitegen/inputs.py`, `read_inputs` returns a frozen `SiteInputs` with the colors, `site/charts/explain.json`, the HTML of `MODEL_CARD.md` (Python `markdown`) and `SiteConfig` (URL and anon key from the environment or `.env`). It raises `ValueError` naming the missing file or variable, and it never reads `SUPABASE_SERVICE_KEY`. Check: with synthetic files it returns the expected values; a missing file or variable raises; a test sets a fake service key and finds it nowhere in the result.
-4. **The template and the build.** Create `docs/site/index.html.j2` (the six empty sections, no figures) and `src/sitegen/build.py` with `build_site(inputs, out_dir)`, which renders with `StrictUndefined` and writes `index.html`, `site.css` and `site.js`. Check: with synthetic inputs the output exists; a missing template variable raises; running it twice gives identical bytes.
-5. **The CLI.** Create `scripts/build_site.py` that calls `read_inputs` and `build_site`, prints the files written and the command to serve the page (`python -m http.server -d site`), and ends with a `STOPPED:` line and exit code 1 on a `ValueError`. Check: it runs on the real repo and writes `site/index.html`; with a missing `.env` variable it stops and writes nothing.
+3. **The inputs of the page.** In `src/sitegen/inputs.py`, `read_inputs` returns a frozen `SiteInputs` with the colors, `site/charts/explain.json`, the HTML of `MODEL_CARD.md` (Python `markdown`) split into a visible summary (the opening and the first `##` section) and the rest, and `SiteConfig` (URL and anon key from the environment or `.env`). It raises `ValueError` naming the missing file or variable, and it never reads `SUPABASE_SERVICE_KEY`. Check: with synthetic files it returns the expected values; a missing file or variable raises; a test sets a fake service key and finds it nowhere in the result.
+4. **The template and the build.** Create `docs/site/index.html.j2` (the five empty sections and the model link, no figures), `docs/site/model.html.j2` and `src/sitegen/build.py` with `build_site(inputs, out_dir)`, which renders with `StrictUndefined` and writes `index.html`, `model.html`, `site.css` and `site.js`. Check: with synthetic inputs the output exists; a missing template variable raises; running it twice gives identical bytes.
+5. **The CLI.** Create `scripts/build_site.py` that calls `read_inputs` and `build_site`, prints the files written and the command to serve the page (`python -m http.server -d site`), and ends with a `STOPPED:` line and exit code 1 on a `ValueError`. Check: it runs on the real repo and writes `site/index.html` and `site/model.html`; with a missing `.env` variable it stops and writes nothing.
 6. **Data access and the fallback.** In `docs/site/site.js`, `loadData()`: the five REST reads with the anon key (`prediction_results` filtered by `model_version_id` and paged with `Range` until a short page comes back), an 8-second timeout, and the switch to `snapshot.json` as a whole with the `schema_version` check. Add `tests/site/js/data.test.mjs` with fake `fetch` cases: success, one failing query, a timeout, a snapshot with another version, and more than 1,000 `prediction_results` rows. Check: `node --test tests/site/js` passes and a fallback shows the notice text with `generated_at`.
 7. **Formatting and the champion lookup.** In `site.js`, the pure functions `formatMetric`, `findChampion` and `findBaseline` (rules of the data model), tested in `tests/site/js/format.test.mjs`. Check: the rounding of each metric and the champion/baseline lookup on the sample snapshot.
 8. **Hero and results.** Render the hero and the Results section from `loadData()`: the four figures counting from 0 and the per-race MAE bars. Add the sample snapshot `tests/site/sample_snapshot.json`. Check by hand: `uv run python scripts/build_site.py` and `python -m http.server -d site`, the figures count when the section enters the viewport and, with `prefers-reduced-motion`, show at once.
 9. **Race selector, table and late mark.** Render the Race section: the selector (default the latest race with a prediction), the driver table with team colors and the `is_late` mark. Check by hand with the sample snapshot: changing the race changes the table and a late row shows the mark.
 10. **Predicted vs actual.** The SVG scatter plot in `site.js`: points drawn in sequence, a move to the new position when the race changes, the late mark in the points, a neutral gray for a team without a color. Check by hand with the sample snapshot at 1440 and 375 px.
-11. **Features and explanation.** Render the Features section from `championExplain` (shown only if its `model_version_id` is the champion's, otherwise hidden with a notice) and the Explanation section with the card HTML and the `.svg` charts linked by relative path. Check by hand: both sections render; with another `model_version_id` the Features section hides.
+11. **Features and the model page.** Render the Features section of the landing from `championExplain` (shown only if its `model_version_id` is the champion's, otherwise hidden with a notice). In `model.html`, show the card summary and keep the rest in the closed `<details>`, with the `.svg` charts linked by relative path and a link back to the landing. `site.js` acts only on the elements of the page it runs on. Check by hand: both render; the landing has no card text; with another `model_version_id` the Features section hides.
 12. **Visual identity and motion.** With the `frontend-design` skill, write `site.css` and the scroll-driven entries (`animation-timeline: view()` plus the `IntersectionObserver` fallback), the dark theme, the local fonts and the `prefers-reduced-motion` rule, and copy the fonts into `site/fonts/`. Check by hand with the sample snapshot at 1440 and 375 px: no horizontal scroll, no third-party request in the browser's network tab, every section animates on scroll.
 13. **The service-key test and the cleanup.** A test builds `site/` from synthetic inputs and fails if the service key, `SUPABASE_SERVICE_KEY` or any `http` URL other than the Supabase one appears in any file. Then `ruff check src scripts tests` and `ruff format --check src scripts tests`. Check: both pass.
 14. **Real run.** The user runs `! uv run python scripts/build_site.py` and opens `site/` with `python -m http.server -d site`. Check together: the figures equal what Supabase returns (champion MAE 0.551 and baseline 0.732 over the 20 races of 2026), the race table of a late race shows the mark, and stopping the network or using a wrong anon key switches the page to the snapshot notice (with the sample snapshot copied by hand to `site/`, since the real one is SPEC 17). Record the result in `DECISIONS.md`.
@@ -127,7 +128,7 @@ Each step leaves `uv run pytest tests` green and can be committed on its own. Th
 
 **Generator**
 
-- [ ] `uv run python scripts/build_site.py` writes `site/index.html`, `site/site.css`, `site/site.js` and `site/fonts/`, and running it twice gives identical bytes.
+- [ ] `uv run python scripts/build_site.py` writes `site/index.html`, `site/model.html`, `site/site.css`, `site/site.js` and `site/fonts/`, and running it twice gives identical bytes.
 - [ ] With a missing `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `site/charts/explain.json` or `MODEL_CARD.md`, it exits with code 1 and a `STOPPED:` line naming what is missing, and writes no file.
 - [ ] The template renders with `StrictUndefined` and holds no figure: a variable missing from the context raises.
 - [ ] `config/team_colors.json` has one `#RRGGBB` entry per name in `teams.name` (the 12 listed in the data model) and a color for every target of the `config/teams.yml` aliases.
@@ -156,7 +157,7 @@ Each step leaves `uv run pytest tests` green and can be committed on its own. Th
 - [ ] A row with `is_valid_row = false` or no actual pace stays in the table and does not appear in the scatter plot.
 - [ ] A team without a color in `config/team_colors.json` is drawn with `--team-unknown` and the page does not fail.
 - [ ] The Features section shows only if `explain.json` has the champion's `model_version_id`; otherwise it is hidden with a notice.
-- [ ] The Explanation section shows the text of `MODEL_CARD.md` and links the SPEC 11 `.svg` charts by relative path.
+- [ ] `model.html` shows the opening and first section of `MODEL_CARD.md` and keeps the rest in a closed `<details>`, links the SPEC 11 `.svg` charts by relative path and links back to the landing; `index.html` holds no text of the card and links to `model.html`.
 
 **Motion and design**
 
@@ -179,7 +180,7 @@ Each step leaves `uv run pytest tests` green and can be committed on its own. Th
 **Split and scope**
 
 - **Yes:** split Phase 7 into SPEC 16 (generator, sections, data access, fallback) and SPEC 17 (`publish`, the `snapshot.json` writer and the check that no monitoring data is exposed). **No:** one spec for the whole phase: it touched three areas (generator, browser data access, publishing) and would have had about 14 steps with unrelated checks.
-- **Yes:** one page, `index.html`, with sections and a race selector. **No:** several pages (`race.html`, `model.html`): the content is small, one scroll tells the story, and a second page doubles the fallback and navigation code.
+- **Yes:** two pages: the landing `index.html` (sections and a race selector) and `model.html` (the model card, summary visible and the rest in a closed `<details>`). **No:** the whole card in the landing (about 13 KB of HTML, too long for a first page, the user's call) and **no** more pages (`race.html`): `model.html` needs no data, so it adds no fallback code, and the landing still tells the story in one scroll. This reverses the earlier "one page" decision.
 
 **Data access**
 
@@ -241,7 +242,7 @@ Each step leaves `uv run pytest tests` green and can be committed on its own. Th
 - The `publish` script, the writer of `snapshot.json` and the check that drift and monitoring data are not exposed (SPEC 17).
 - Deployment to GitHub Pages and the GitHub Actions workflow (Phase 9).
 - The shadow model, metrics by team or circuit type, drift charts and any private table.
-- A JavaScript framework or library, a bundler, a second page and a light theme.
+- A JavaScript framework or library, a bundler, pages other than `index.html` and `model.html`, and a light theme.
 - Any change to the Supabase schema, the RLS policies, `config/features.yml`, `config/training.json` or `pyproject.toml`.
 
 Each one of those, if it lands, goes in its own spec.

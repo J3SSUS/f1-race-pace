@@ -5,6 +5,7 @@ import os
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 
 import markdown
@@ -45,7 +46,8 @@ class SiteConfig:
 class SiteInputs:
     team_colors: dict[str, str]
     explain: dict  # site/charts/explain.json (SPEC 11); `model_version_id` says which model it explains
-    card_html: str  # MODEL_CARD.md rendered to HTML, with the chart links made relative to site/
+    card_summary_html: str  # the opening and first `##` section of MODEL_CARD.md, shown on model.html
+    card_details_html: str  # the rest of the card, in the closed <details> of model.html
     config: SiteConfig
 
 
@@ -67,11 +69,17 @@ def _read_explain(root: Path) -> dict:
     return data
 
 
-def _card_html(root: Path) -> str:
-    """The card as HTML. Its charts are linked from the repository root (`site/charts/x.svg`); in the page they sit
-    next to `index.html`, so the links become `charts/x.svg`."""
+def _card_html(root: Path) -> tuple[str, str]:
+    """The card as HTML in two parts: the opening plus the first `##` section, and the rest.
+
+    Its charts are linked from the repository root (`site/charts/x.svg`); in the page they sit next to `model.html`,
+    so the links become `charts/x.svg`."""
     text = _read_text(root / "MODEL_CARD.md", root).replace("](site/charts/", "](charts/")
-    return markdown.markdown(text, extensions=["tables", "fenced_code"])
+    sections = [m.start() for m in re.finditer(r"^## ", text, re.MULTILINE)]
+    if len(sections) < 2:
+        raise ValueError("MODEL_CARD.md: expected at least two '## ' sections (a summary and the rest)")
+    html = partial(markdown.markdown, extensions=["tables", "fenced_code"])
+    return html(text[: sections[1]]), html(text[sections[1] :])
 
 
 def _read_config(root: Path, environ: Mapping[str, str] | None) -> SiteConfig:
@@ -88,9 +96,13 @@ def _read_config(root: Path, environ: Mapping[str, str] | None) -> SiteConfig:
 
 def read_inputs(root: Path = ROOT, environ: Mapping[str, str] | None = None) -> SiteInputs:
     """Everything the page is built from. A missing file or variable raises `ValueError` naming it."""
+    team_colors = load_team_colors(root / "config" / "team_colors.json")
+    explain = _read_explain(root)
+    card_summary_html, card_details_html = _card_html(root)
     return SiteInputs(
-        team_colors=load_team_colors(root / "config" / "team_colors.json"),
-        explain=_read_explain(root),
-        card_html=_card_html(root),
+        team_colors=team_colors,
+        explain=explain,
+        card_summary_html=card_summary_html,
+        card_details_html=card_details_html,
         config=_read_config(root, environ),
     )

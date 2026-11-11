@@ -1,4 +1,4 @@
-"""Write the static page to `site/`: render `docs/site/index.html.j2` and copy `site.css` and `site.js`.
+"""Write the static site to `site/`: render `index.html` and `model.html`, and copy `site.css` and `site.js`.
 
 `site.js` is the source file with `const SITE_CONFIG = {...};` put in front of it, so the source stays plain JavaScript
 that Node can test. Nothing here queries Supabase or reads the service key; it only writes what `SiteInputs` holds.
@@ -34,19 +34,22 @@ def _site_config_js(inputs: SiteInputs) -> str:
 
 
 def build_site(inputs: SiteInputs, out_dir: Path = OUT_DIR, source_dir: Path = SOURCE_DIR) -> list[Path]:
-    """Write `index.html`, `site.css` and `site.js` to `out_dir`; the same inputs give the same bytes."""
+    """Write `index.html`, `model.html`, `site.css` and `site.js` to `out_dir`; the same inputs give the same bytes."""
     env = Environment(
         loader=FileSystemLoader(source_dir),
         autoescape=select_autoescape(["html", "j2"]),
         undefined=StrictUndefined,
         keep_trailing_newline=True,
     )
-    html = env.get_template("index.html.j2").render(card_html=inputs.card_html)
+    index = env.get_template("index.html.j2").render()
+    model = env.get_template("model.html.j2").render(
+        card_summary_html=inputs.card_summary_html, card_details_html=inputs.card_details_html
+    )
     css = (source_dir / "site.css").read_text()
     js = _site_config_js(inputs) + (source_dir / "site.js").read_text()
     out_dir.mkdir(parents=True, exist_ok=True)
     written = []
-    for name, text in (("index.html", html), ("site.css", css), ("site.js", js)):
+    for name, text in (("index.html", index), ("model.html", model), ("site.css", css), ("site.js", js)):
         path = out_dir / name
         path.write_bytes(text.encode("utf-8"))
         written.append(path)

@@ -27,21 +27,38 @@ def test_it_returns_the_four_inputs(root):
     assert isinstance(inputs, SiteInputs)
     assert inputs.team_colors["Ferrari"] == "#E8002D"
     assert inputs.explain["model_version_id"] == 4
-    assert "<h1>Card</h1>" in inputs.card_html
-    assert "<table>" in inputs.card_html
+    assert "<h1>Card</h1>" in inputs.card_summary_html
+    assert "<h2>2. Results</h2>" in inputs.card_details_html
+    assert "<table>" in inputs.card_details_html
     assert inputs.config == SiteConfig("https://abc.supabase.co", "anon-key")
 
 
-def test_the_card_links_its_charts_next_to_index_html(root):
-    html = read_inputs(root, ENV).card_html
-    assert 'src="charts/permutation_importance.svg"' in html
-    assert "site/charts" not in html
+def test_the_card_is_split_before_its_second_section(root):
+    inputs = read_inputs(root, ENV)
+    assert "Intro." in inputs.card_summary_html
+    assert "<h2>1. What it predicts</h2>" in inputs.card_summary_html
+    assert "The pace." in inputs.card_summary_html
+    assert "Results" not in inputs.card_summary_html
+    assert "What it predicts" not in inputs.card_details_html
+
+
+def test_the_card_links_its_charts_next_to_the_pages(root):
+    inputs = read_inputs(root, ENV)
+    assert 'src="charts/permutation_importance.svg"' in inputs.card_details_html
+    assert "site/charts" not in inputs.card_summary_html + inputs.card_details_html
+
+
+@pytest.mark.parametrize("card", ["# Card\n\nNo sections.\n", "# Card\n\n## 1. Only one\n\nText.\n"])
+def test_a_card_with_fewer_than_two_sections_raises(root, card):
+    (root / "MODEL_CARD.md").write_text(card)
+    with pytest.raises(ValueError, match="MODEL_CARD.md"):
+        read_inputs(root, ENV)
 
 
 def test_the_inputs_are_frozen(root):
     inputs = read_inputs(root, ENV)
     with pytest.raises(AttributeError):
-        inputs.card_html = "x"
+        inputs.card_summary_html = "x"
 
 
 @pytest.mark.parametrize(

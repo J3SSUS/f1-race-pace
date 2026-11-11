@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>How the F1 race pace model works</title>
+  <meta name="description" content="What the model predicts, how it is measured and where it is limited.">
+  <link rel="stylesheet" href="site.css">
+  <script src="site.js" defer></script>
+</head>
+<body>
+  <main>
+    <p><a href="index.html">Back to the results</a></p>
+    <section id="model-summary" aria-label="Summary of the model card">
+{{ card_summary_html | safe }}
+    </section>
+    <details id="model-card-full">
+      <summary>Read the full model card</summary>
+{{ card_details_html | safe }}
+    </details>
+  </main>
+</body>
+</html>

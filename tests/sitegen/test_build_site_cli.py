@@ -28,9 +28,9 @@ def test_it_writes_the_page_and_prints_how_to_serve_it(cli, root, tmp_path):
     out_dir = tmp_path / "out"
     code, lines = run(cli, "--output-dir", str(out_dir), reader=partial(read_inputs, root, ENV))
     assert code == 0
-    assert sorted(p.name for p in out_dir.iterdir()) == ["index.html", "site.css", "site.js"]
+    assert sorted(p.name for p in out_dir.iterdir()) == ["index.html", "model.html", "site.css", "site.js"]
     assert [line for line in lines if line.startswith("wrote ")] == [
-        f"wrote {out_dir / name}" for name in ("index.html", "site.css", "site.js")
+        f"wrote {out_dir / name}" for name in ("index.html", "model.html", "site.css", "site.js")
     ]
     assert "python -m http.server -d" in lines[-1]
 
@@ -56,6 +56,7 @@ def test_a_missing_file_stops_it_and_writes_nothing(cli, root, tmp_path):
 def test_a_template_error_is_a_stopped_line_too(cli, root, tmp_path):
     (tmp_path / "source").mkdir()
     (tmp_path / "source" / "index.html.j2").write_text("{{ not_defined }}")
+    (tmp_path / "source" / "model.html.j2").write_text("")
     from sitegen.build import build_site
 
     builder = partial(build_site, source_dir=tmp_path / "source")

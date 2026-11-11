@@ -13,6 +13,8 @@ def root(tmp_path):
     (tmp_path / "site" / "charts").mkdir(parents=True)
     (tmp_path / "site" / "charts" / "explain.json").write_text(json.dumps({"model_version_id": 4, "importance": []}))
     (tmp_path / "MODEL_CARD.md").write_text(
-        "# Card\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\n![Importance](site/charts/permutation_importance.svg)\n"
+        "# Card\n\nIntro.\n\n## 1. What it predicts\n\nThe pace.\n\n"
+        "## 2. Results\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\n"
+        "![Importance](site/charts/permutation_importance.svg)\n"
     )
     return tmp_path
