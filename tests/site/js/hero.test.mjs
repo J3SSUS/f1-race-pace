@@ -3,7 +3,7 @@ import { createRequire } from "node:module";
 import test from "node:test";
 
 const require = createRequire(import.meta.url);
-const { runnerLaps, lapFraction } = require("../../../docs/site/site.js");
+const { runnerLaps, lapFraction, runnerTitle } = require("../../../docs/site/site.js");
 
 const row = (driver, pace, team = "Ferrari") => ({ driver, team, predicted_pace_delta_pct: pace });
 
@@ -54,4 +54,15 @@ test("after one full lap a runner is back where it started", () => {
 test("a faster runner covers more of the lap in the same time", () => {
   const [fast, slow] = runnerLaps([row("F", -1), row("S", 1.5)]);
   assert.ok(lapFraction(fast, 5) - fast.offset > lapFraction(slow, 5) - slow.offset);
+});
+
+test("a dot's tooltip names the driver and team, the predicted pace and the lap it runs", () => {
+  const [ant, bot] = runnerLaps([row("ANT", -0.98, "Mercedes"), row("BOT", 1.81, "Cadillac")]);
+  assert.equal(runnerTitle(ant), "ANT (Mercedes): predicted pace -0.98%, one lap every 14.4 s here");
+  assert.equal(runnerTitle(bot), "BOT (Cadillac): predicted pace 1.81%, one lap every 18.9 s here");
+});
+
+test("the runner keeps the predicted pace it was built from", () => {
+  const [runner] = runnerLaps([row("A", 0.42)]);
+  assert.equal(runner.pace, 0.42);
 });

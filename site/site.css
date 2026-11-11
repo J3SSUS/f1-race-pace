@@ -103,9 +103,9 @@ h2 { font-size: clamp(2rem, 5vw, 3.2rem); line-height: 1; margin-bottom: 1.5rem;
 
 /* ---- hero circuit: one dot per driver of the last scored race ---- */
 .hero-grid { align-items: center; display: grid; gap: 2.5rem; }
-@media (min-width: 62rem) { .hero-grid { grid-template-columns: 1.1fr 0.9fr; } }
-.hero-circuit { margin: 0; }
-#circuit { display: block; height: auto; max-width: 28rem; width: 100%; }
+@media (min-width: 62rem) { .hero-grid { grid-template-columns: 1fr 1fr; } }
+.hero-circuit { margin: 0; position: relative; }
+#circuit { display: block; height: auto; max-width: 40rem; width: 100%; }
 .track-line { fill: none; stroke: var(--line); stroke-linecap: round; stroke-linejoin: round; stroke-width: 14; }
 .track-center { fill: none; stroke: var(--muted); stroke-dasharray: 2 7; stroke-opacity: 0.55; stroke-width: 1; }
 .track-line { animation: draw 2.2s cubic-bezier(0.4, 0, 0.2, 1) 0.4s both; stroke-dasharray: 1; }
@@ -113,7 +113,11 @@ h2 { font-size: clamp(2rem, 5vw, 3.2rem); line-height: 1; margin-bottom: 1.5rem;
 #circuit-runners { opacity: 0; transition: opacity 0.6s ease 0.2s; }
 #circuit-runners.ready { opacity: 1; }
 .runner { fill: var(--team, var(--team-unknown)); stroke: var(--bg); stroke-width: 1.5; }
-#circuit-note { color: var(--muted); font-family: var(--data); font-size: 0.7rem; letter-spacing: 0.04em; margin-top: 0.75rem; max-width: 28rem; }
+.runner-hit { fill: transparent; pointer-events: all; }
+.runner-g { cursor: pointer; }
+.runner-g:hover .runner { stroke: var(--text); stroke-width: 2; }
+.runner-tip { background: var(--panel); border: 1px solid var(--line); color: var(--text); font-family: var(--data); font-size: 0.72rem; line-height: 1.4; max-width: 19rem; padding: 0.45rem 0.65rem; pointer-events: none; position: absolute; transform: translate(-50%, calc(-100% - 0.6rem)); width: max-content; z-index: 5; }
+#circuit-note { color: var(--muted); font-family: var(--data); font-size: 0.7rem; letter-spacing: 0.04em; margin-top: 0.75rem; max-width: 40rem; }
 
 /* ---- figures ---- */
 .figures { display: grid; gap: 1rem; grid-template-columns: 1fr; }

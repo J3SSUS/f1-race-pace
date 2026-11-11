@@ -407,9 +407,15 @@ function runnerLaps(rows, { baseSeconds = 16, exaggeration = 10 } = {}) {
   return usable.map((row, index) => ({
     driver: row.driver,
     team: row.team,
+    pace: row.predicted_pace_delta_pct,
     lapSeconds: Math.max(baseSeconds * 0.3, baseSeconds * (1 + (exaggeration * row.predicted_pace_delta_pct) / 100)),
     offset: -index * 0.012,
   }));
+}
+
+/* What the tooltip of a dot says: the driver, the predicted pace and the lap time the dot runs at. */
+function runnerTitle(runner) {
+  return `${runner.driver} (${runner.team}): predicted pace ${formatPace(runner.pace)}, one lap every ${runner.lapSeconds.toFixed(1)} s here`;
 }
 
 /* Where a runner is on the lap (0 to 1) after `seconds`. */
@@ -440,38 +446,77 @@ function renderHero(data) {
     : "No race scored yet.";
 }
 
-/* The dots of the last scored race run around the circuit; with reduced motion they stand still, already spread out. */
+/* The dots of the last scored race run around the circuit; with reduced motion they stand still, already spread out.
+   Over the circuit they pause, and the dot under the pointer says who it is (the browser's own tooltip never shows on
+   a dot that keeps moving). A touch pauses them until the next touch elsewhere. */
 function startRunners(data, colors) {
+  const svg = document.getElementById("circuit");
   const track = document.getElementById("circuit-track");
   const holder = document.getElementById("circuit-runners");
   const note = document.getElementById("circuit-note");
+  const tip = document.getElementById("runner-tip");
   const race = lastScoredRace(data);
-  if (!track || !holder || !race) return;
+  if (!svg || !track || !holder || !race) return;
   const laps = runnerLaps(raceRows(data, race.year, race.round));
   if (laps.length === 0) return;
   const length = track.getTotalLength();
-  const dots = laps.map((lap) => {
+  const groups = laps.map((lap) => {
+    const group = svgEl("g", { class: "runner-g" });
+    group.dataset.tip = runnerTitle(lap);
     const dot = svgEl("circle", { class: "runner", r: 5 });
     const color = teamColor(colors, lap.team);
     if (color) dot.style.setProperty("--team", color);
-    dot.append(svgEl("title", {}, `${lap.driver} (${lap.team})`));
-    holder.append(dot);
-    return dot;
+    group.append(svgEl("circle", { class: "runner-hit", r: 11 }), dot);
+    holder.append(group);
+    return group;
   });
   const place = (seconds) => laps.forEach((lap, index) => {
     const point = track.getPointAtLength(lapFraction(lap, seconds) * length);
-    dots[index].setAttribute("cx", point.x.toFixed(1));
-    dots[index].setAttribute("cy", point.y.toFixed(1));
+    groups[index].setAttribute("transform", `translate(${point.x.toFixed(1)} ${point.y.toFixed(1)})`);
   });
   if (note) note.textContent = `${race.event_name || `Round ${race.round}`}: each dot runs at its driver's predicted pace, with the differences exaggerated tenfold.`;
   holder.classList.add("ready");
+
+  let paused = false;
+  const hideTip = () => { if (tip) tip.hidden = true; };
+  const showTip = (group) => {
+    if (!tip) return;
+    const figure = tip.parentElement.getBoundingClientRect();
+    const dot = group.getBoundingClientRect();
+    tip.textContent = group.dataset.tip;
+    tip.hidden = false;
+    const half = tip.offsetWidth / 2;
+    const center = dot.left + dot.width / 2 - figure.left;
+    tip.style.left = `${Math.min(Math.max(center, half), figure.width - half)}px`;
+    tip.style.top = `${dot.top - figure.top}px`;
+  };
+  svg.addEventListener("pointerenter", () => { paused = true; });
+  svg.addEventListener("pointerleave", (event) => {
+    if (event.pointerType === "touch") return;
+    paused = false;
+    hideTip();
+  });
+  svg.addEventListener("pointerover", (event) => {
+    const group = event.target.closest(".runner-g");
+    if (group) showTip(group);
+    else hideTip();
+  });
+  document.addEventListener("pointerdown", (event) => {
+    if (svg.contains(event.target)) return;
+    paused = false;
+    hideTip();
+  });
+
   if (prefersReducedMotion() || typeof requestAnimationFrame !== "function") {
     place(14);
     return;
   }
-  const origin = performance.now();
+  let clock = 0;
+  let last = performance.now();
   const frame = (now) => {
-    place((now - origin) / 1000);
+    if (!paused) clock += now - last;
+    last = now;
+    place(clock / 1000);
     requestAnimationFrame(frame);
   };
   requestAnimationFrame(frame);
@@ -825,7 +870,7 @@ if (typeof module !== "undefined" && module.exports) {
   module.exports = {
     loadData, describeSource, formatMetric, findChampion, findBaseline, normalizeLive,
     buildResultsModel, lastScoredRace, valueAt,
-    formatPace, teamColor, racesWithPredictions, raceRows, raceHeader, raceKey, niceTicks, scatterModel, declutterLabels, placeLabel, featuresModel, runnerLaps, lapFraction, PAGE_SIZE,
+    formatPace, teamColor, racesWithPredictions, raceRows, raceHeader, raceKey, niceTicks, scatterModel, declutterLabels, placeLabel, featuresModel, runnerLaps, lapFraction, runnerTitle, PAGE_SIZE,
   };
 }
 
