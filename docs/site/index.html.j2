@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>F1 race pace</title>
+  <meta name="description" content="Predicted race pace of every F1 driver after Saturday qualifying, against what happened on Sunday.">
+  <link rel="stylesheet" href="site.css">
+  <script src="site.js" defer></script>
+</head>
+<body>
+  <div id="notice" role="status" hidden></div>
+  <noscript><p>This page needs JavaScript to load the data.</p></noscript>
+  <main>
+    <section id="hero" aria-labelledby="hero-title">
+      <h1 id="hero-title">F1 race pace</h1>
+      <p id="hero-meta"></p>
+    </section>
+
+    <section id="results" aria-labelledby="results-title">
+      <h2 id="results-title">Results</h2>
+      <div id="results-figures"></div>
+      <div id="results-by-race"></div>
+    </section>
+
+    <section id="race" aria-labelledby="race-title">
+      <h2 id="race-title">Race</h2>
+      <label for="race-select">Race</label>
+      <select id="race-select"></select>
+      <p id="race-meta"></p>
+      <table id="race-table"></table>
+    </section>
+
+    <section id="scatter" aria-labelledby="scatter-title">
+      <h2 id="scatter-title">Predicted vs actual</h2>
+      <svg id="scatter-plot" role="img" aria-label="Predicted against actual pace of each driver"></svg>
+    </section>
+
+    <section id="features" aria-labelledby="features-title" hidden>
+      <h2 id="features-title">Features</h2>
+      <div id="features-importance"></div>
+    </section>
+
+    <section id="explanation" aria-labelledby="explanation-title">
+      <h2 id="explanation-title">Explanation</h2>
+      <div id="model-card">
+{{ card_html | safe }}
+      </div>
+    </section>
+  </main>
+</body>
+</html>

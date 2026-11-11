@@ -1,0 +1,3 @@
+/* Source of site/site.css. SPEC 16 step 12 writes the visual identity; until then, a readable default. */
+body { font-family: system-ui, sans-serif; margin: 0 auto; max-width: 60rem; padding: 0 1rem; }
+section[hidden], #notice[hidden] { display: none; }
