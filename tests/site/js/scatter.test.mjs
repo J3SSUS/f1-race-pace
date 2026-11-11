@@ -4,7 +4,7 @@ import { createRequire } from "node:module";
 import test from "node:test";
 
 const require = createRequire(import.meta.url);
-const { niceTicks, scatterModel, declutterLabels, placeLabel, raceRows } = require("../../../docs/site/site.js");
+const { niceTicks, scatterModel, declutterLabels, placeLabel, departing, raceRows } = require("../../../docs/site/site.js");
 
 const SNAPSHOT = JSON.parse(readFileSync(new URL("../sample_snapshot.json", import.meta.url), "utf8"));
 const DATA = { results: SNAPSHOT.results };
@@ -157,4 +157,17 @@ test("a point in the top right corner gets a label below and to the left", () =>
   const place = placeLabel({ px: 550, py: 8, ...PLACE });
   assert.equal(place.anchor, "end");
   assert.ok(place.y > 0 && place.right <= 560 && place.top >= 0);
+});
+
+test("the drivers of the last race that are not in the new one have to leave the plot", () => {
+  const r16 = scatterModel(raceRows(DATA, 2026, 16)).points;
+  const r17 = scatterModel(raceRows(DATA, 2026, 17)).points;
+  assert.deepEqual(departing(r16.map((p) => p.driver), r17), ["ALB"]);
+  assert.deepEqual(departing(r17.map((p) => p.driver), r16), []);
+});
+
+test("nobody leaves when the same drivers are on the plot, and everybody leaves when the new race has no points", () => {
+  assert.deepEqual(departing(["A", "B"], [{ driver: "B" }, { driver: "A" }]), []);
+  assert.deepEqual(departing(["A", "B"], []), ["A", "B"]);
+  assert.deepEqual(departing([], [{ driver: "A" }]), []);
 });

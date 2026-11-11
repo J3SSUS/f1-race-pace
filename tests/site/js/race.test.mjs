@@ -80,3 +80,73 @@ test("rows keep their own is_late and a row with no actual pace stays in the rac
 test("race keys are year and round", () => {
   assert.equal(raceKey(2026, 17), "2026-17");
 });
+
+const { isPending } = require("../../../docs/site/site.js");
+
+const pendingRow = (driver) => ({
+  year: 2026,
+  round: 21,
+  driver,
+  team: "Ferrari",
+  predicted_pace_delta_pct: 0.1,
+  actual_pace_delta_pct: null,
+  is_valid_row: null,
+  is_late: false,
+});
+
+test("a race whose drivers have no result at all is pending, as the view gives it before the race", () => {
+  assert.equal(isPending([pendingRow("A"), pendingRow("B")]), true);
+  assert.equal(isPending([{ ...pendingRow("A"), actual_pace_delta_pct: undefined, is_valid_row: undefined }]), true);
+});
+
+test("a race with any result is not pending, even if some drivers have no reliable pace", () => {
+  const scored = { ...pendingRow("B"), actual_pace_delta_pct: 0.3, is_valid_row: true };
+  assert.equal(isPending([pendingRow("A"), scored]), false);
+  assert.equal(isPending(raceRows(DATA, 2026, 17)), false); // SAR has no pace but the others do
+});
+
+test("a race that ran but where no driver has a reliable pace is not pending", () => {
+  assert.equal(isPending([{ ...pendingRow("A"), is_valid_row: false }, { ...pendingRow("B"), is_valid_row: false }]), false);
+});
+
+test("a race with no rows is not pending, and the header says so", () => {
+  assert.equal(isPending([]), false);
+  const [r16, r17] = racesWithPredictions(DATA);
+  assert.equal(raceHeader(r16, raceRows(DATA, 2026, 16)).pending, false);
+  assert.equal(raceHeader(r17, raceRows(DATA, 2026, 17)).pending, false);
+  assert.equal(raceHeader({ round: 21, event_name: "X", race_date: "2026-11-15" }, [pendingRow("A")]).pending, true);
+});
+
+test("the late and pending marks are independent: a prediction made just after the start is both", () => {
+  const header = raceHeader({ round: 21, event_name: "X" }, [{ ...pendingRow("A"), is_late: true }]);
+  assert.equal(header.late, true);
+  assert.equal(header.pending, true);
+});
+
+const { pendingBanner } = require("../../../docs/site/site.js");
+
+test("the banner announces the latest race when it is predicted and has no result yet", () => {
+  const data = {
+    ...DATA,
+    races: [...races, { race_id: 90, year: 2026, round: 21, event_name: "Next Grand Prix", race_date: "2026-11-22" }],
+    results: [...results, pendingRow("A"), pendingRow("B")],
+  };
+  assert.deepEqual(pendingBanner(data), { title: "R21 Next Grand Prix", date: "2026-11-22", key: "2026-21" });
+});
+
+test("there is no banner when the latest race already has its result", () => {
+  assert.equal(pendingBanner(DATA), null);
+  assert.equal(pendingBanner({ ...DATA, results: [] }), null);
+});
+
+test("an earlier race that is pending does not get the banner when a later one has its result", () => {
+  const earlierPending = { ...DATA, results: [...results.filter((r) => r.round === 17), { ...pendingRow("A"), round: 10 }] };
+  assert.equal(pendingBanner(earlierPending), null);
+});
+
+test("the banner does not depend on the selector and names the race even when its date is missing", () => {
+  const data = { ...DATA, races: [], results: [pendingRow("A")] };
+  const banner = pendingBanner(data);
+  assert.equal(banner.title, "R21 round 21");
+  assert.equal(banner.date, null);
+});

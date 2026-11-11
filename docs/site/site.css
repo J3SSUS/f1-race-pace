@@ -18,6 +18,7 @@
   --champion: #b36bff;  /* purple sector */
   --good: #3ddc84;      /* green sector */
   --flag: #ffd23f;      /* yellow flag */
+  --pending: #7cc4ff;   /* a prediction is out and the race has not been run */
   --team-unknown: #8a8f98;
 
   --display: "Barlow Condensed", "Arial Narrow", sans-serif;
@@ -56,6 +57,8 @@ a:hover { color: var(--text); }
 
 /* ---- notice and masthead ---- */
 #notice, .noscript { background: var(--flag); color: var(--bg); font-family: var(--data); font-size: 0.8rem; margin: 0; padding: 0.6rem var(--gutter); }
+#pending-banner { background: var(--pending); color: var(--bg); font-family: var(--data); font-size: 0.8rem; margin: 0; padding: 0.6rem var(--gutter); }
+#pending-banner a { color: var(--bg); font-weight: 700; }
 .masthead {
   align-items: center;
   backdrop-filter: blur(10px);
@@ -162,6 +165,7 @@ tbody tr:hover { background: var(--panel); }
 .pace { font-family: var(--data); font-size: 0.92rem; font-variant-numeric: tabular-nums; text-align: right; }
 .swatch { background: var(--team, var(--team-unknown)); display: inline-block; height: 1.15em; margin-right: 0.65rem; vertical-align: -0.2em; width: 4px; }
 tr.not-scored td { color: var(--muted); }
+td.pending { color: var(--muted); font-style: italic; }
 tr.not-scored .swatch { opacity: 0.5; }
 .late-mark { align-items: center; color: var(--flag); display: inline-flex; font-family: var(--data); font-size: 0.65rem; font-weight: 500; gap: 0.3rem; letter-spacing: 0.08em; margin-left: 0.35rem; text-transform: uppercase; }
 .late-mark::before { background: var(--flag); content: ""; display: inline-block; height: 0.55rem; width: 0.4rem; }

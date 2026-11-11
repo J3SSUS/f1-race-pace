@@ -1,6 +1,6 @@
 # SPEC 16 — Static page generator
 
-> **Status:** Approved
+> **Status:** Implemented
 > **Depends on:** SPEC 05 (feature store load), SPEC 11 (the champion's charts), SPEC 12 (model card), SPEC 14 (prediction script), SPEC 15 (walk-forward metrics)
 > **Backlog:** Phase 7 of `docs/backlog.md`: "Generator", "Data access", "Sections" and "Late predictions". "`publish` script" and "Verify drift and other monitoring data are not exposed" move to SPEC 17
 > **Date:** 2026-11-10
@@ -21,7 +21,7 @@
   5. **Features:** the champion's features and their permutation importance, read from `site/charts/explain.json` (SPEC 11).
   6. **Model link:** a link to `model.html` ("How the model works"). The landing holds no text of the model card.
 - The model page, `site/model.html`: the opening of `MODEL_CARD.md` and its first `##` section visible, and the rest of the card inside a closed `<details>` ("Read the full model card"), rendered with Python's Markdown library, with the SPEC 11 `.svg` charts linked by relative path and a link back to the landing. It needs no Supabase data.
-- **Late predictions:** a prediction with `is_late = true` shows a visible mark in the table, in the scatter plot and in the race header, and a race whose predictions are late has a small note under its header saying what late means.
+- **Late predictions:** a prediction with `is_late = true` shows a visible mark in the table, in the scatter plot and in the race header, and a race whose predictions are late has a small note under its header saying what late means. A race that is still waiting for its result (Saturday, after the prediction) says so, shows "pending" instead of the actual pace and replaces the scatter plot with a message.
 - **Data access:** `site.js` reads Supabase from the browser with `fetch` to the PostgREST API (no library), using the anon key and only the public tables and views: `prediction_results`, `metrics`, `races`, `model_versions` and `champion_history`. It identifies the champion through `champion_history` and `model_versions`. If any query fails or takes more than 8 seconds, the page switches to `snapshot.json` as a whole (never a mix) and shows a notice with the snapshot date. The snapshot format is defined here, the script that writes it is SPEC 17, and this spec tests the fallback with a sample snapshot in `tests/`.
 - **Credentials:** the generator reads `SUPABASE_URL` and `SUPABASE_ANON_KEY` from the environment or `.env` and writes them into `site.js`. It never reads `SUPABASE_SERVICE_KEY`, and a test checks that the key does not appear in any file of `site/`.
 - **Visual identity:** a telemetry and pitwall style (dark background, large tabular numbers, thin lines, traces), designed with the `frontend-design` skill. Colors per team come from the new `config/team_colors.json`, keyed by the names stored in `teams.name`; a team without a color is drawn in a neutral gray.
@@ -128,52 +128,54 @@ Each step leaves `uv run pytest tests` green and can be committed on its own. Th
 
 **Generator**
 
-- [ ] `uv run python scripts/build_site.py` writes `site/index.html`, `site/model.html`, `site/site.css`, `site/site.js` and `site/fonts/`, and running it twice gives identical bytes.
-- [ ] With a missing `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `site/charts/explain.json` or `MODEL_CARD.md`, it exits with code 1 and a `STOPPED:` line naming what is missing, and writes no file.
-- [ ] The template renders with `StrictUndefined` and holds no figure: a variable missing from the context raises.
-- [ ] `config/team_colors.json` has one `#RRGGBB` entry per name in `teams.name` (the 12 listed in the data model) and a color for every target of the `config/teams.yml` aliases.
+- [x] `uv run python scripts/build_site.py` writes `site/index.html`, `site/model.html`, `site/site.css`, `site/site.js` and `site/fonts/`, and running it twice gives identical bytes.
+- [x] With a missing `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `site/charts/explain.json` or `MODEL_CARD.md`, it exits with code 1 and a `STOPPED:` line naming what is missing, and writes no file.
+- [x] The template renders with `StrictUndefined` and holds no figure: a variable missing from the context raises.
+- [x] `config/team_colors.json` has one `#RRGGBB` entry per name in `teams.name` (the 12 listed in the data model) and a color for every target of the `config/teams.yml` aliases.
 
 **Security and self-containment**
 
-- [ ] No file of `site/` contains `SUPABASE_SERVICE_KEY` or a service key value, and the generator never reads that variable (checked by a test with a fake key).
-- [ ] No file of `site/` references a URL other than the Supabase one: no CDN, no external font, no analytics.
-- [ ] The page reads only `prediction_results`, `metrics`, `races`, `model_versions` and `champion_history`: no private table appears in `site.js`.
-- [ ] `git status` after the build shows only files under `site/`, and `MODEL_CARD.md`, `site/charts/` and `explain.json` are unchanged.
+- [x] No file of `site/` contains `SUPABASE_SERVICE_KEY` or a service key value, and the generator never reads that variable (checked by a test with a fake key).
+- [x] No page of `site/` (`.html`, `.css`, `.js`) references a URL other than the Supabase one, apart from the SVG namespace identifier: no CDN, no external font, no analytics. The license texts in `site/fonts/` are documentation and no page loads them.
+- [x] The page reads only `prediction_results`, `metrics`, `races`, `model_versions` and `champion_history`: no private table appears in `site.js`.
+- [x] `git status` after the build shows only files under `site/`, and `MODEL_CARD.md`, `site/charts/` and `explain.json` are unchanged.
 
 **Data and fallback**
 
-- [ ] With a working connection the page shows the figures from Supabase and no fallback notice.
-- [ ] If any of the five queries fails or takes more than 8 seconds, the whole page uses `snapshot.json` (never a mix) and shows a notice with the snapshot's `generated_at`.
-- [ ] A snapshot with a `schema_version` other than 1 is refused and the page shows "no data available".
-- [ ] `node --test tests/site/js/*.test.mjs` passes: success, one failing query, a timeout, a wrong `schema_version`, the rounding of each metric and the champion and baseline lookup.
-- [ ] `node --test tests/site/js/*.test.mjs` includes a case with more than 1,000 `prediction_results` rows and the page shows all of them.
-- [ ] The champion is the `champion_history` row with `demoted_at` NULL and the baseline is the `model_versions` row with `algorithm = 'baseline'` that has `walk_forward` metrics (the newest, if several do).
+- [x] With a working connection the page shows the figures from Supabase and no fallback notice.
+- [x] If any of the five queries fails or takes more than 8 seconds, the whole page uses `snapshot.json` (never a mix) and shows a notice with the snapshot's `generated_at`.
+- [x] A snapshot with a `schema_version` other than 1 is refused and the page shows "no data available".
+- [x] `node --test tests/site/js/*.test.mjs` passes: success, one failing query, a timeout, a wrong `schema_version`, the rounding of each metric and the champion and baseline lookup.
+- [x] `node --test tests/site/js/*.test.mjs` includes a case with more than 1,000 `prediction_results` rows and the page shows all of them.
+- [x] The champion is the `champion_history` row with `demoted_at` NULL and the baseline is the `model_versions` row with `algorithm = 'baseline'` that has `walk_forward` metrics (the newest, if several do).
 
 **Content**
 
-- [ ] The Results section shows MAE, RMSE, R² and pairwise accuracy of the champion and the baseline, and the per-race MAE, and the figures equal the `walk_forward` rows of `metrics` (champion MAE 0.551 and baseline 0.732 on the 20 races of 2026).
-- [ ] The race selector defaults to the latest race with a prediction, and changing the race changes the table and the scatter plot.
-- [ ] A row with `is_late = true` shows the late mark in the table, in the scatter plot and in the race header, and a row with `is_late = false` shows none.
-- [ ] A row with `is_valid_row = false` or no actual pace stays in the table and does not appear in the scatter plot.
-- [ ] A driver whose pace is far out (more than 3 interquartile ranges from the quartiles) is drawn on the edge of the scatter plot with its real value in the label and in the note under it, and the other drivers keep a readable scale.
-- [ ] A team without a color in `config/team_colors.json` is drawn with `--team-unknown` and the page does not fail.
-- [ ] The Features section shows only if `explain.json` has the champion's `model_version_id`; otherwise it is hidden with a notice.
-- [ ] `model.html` shows the opening and first section of `MODEL_CARD.md` and keeps the rest in a closed `<details>`, links the SPEC 11 `.svg` charts by relative path and links back to the landing; `index.html` holds no text of the card and links to `model.html`.
+- [x] The Results section shows MAE, RMSE, R² and pairwise accuracy of the champion and the baseline, and the per-race MAE, and the figures equal the `walk_forward` rows of `metrics` (champion MAE 0.551 and baseline 0.732 on the 20 races of 2026).
+- [x] The race selector defaults to the latest race with a prediction, and changing the race changes the table and the scatter plot.
+- [x] A row with `is_late = true` shows the late mark in the table, in the scatter plot and in the race header, and a row with `is_late = false` shows none.
+- [x] A row with `is_valid_row = false` or no actual pace stays in the table and does not appear in the scatter plot.
+- [x] When the latest race with predictions has no result yet, a banner at the top says so and links to the Race section; it does not depend on the race chosen in the selector and disappears when that race gets its result.
+- [x] A race that has predictions and no result yet (the view gives NULL for `actual_pace_delta_pct` and `is_valid_row`) shows a note saying the actual pace appears after the race, rows that are not dimmed with "pending" in the Actual column, and a message in place of the scatter plot; switching to a race that has run draws the plot again and removes the dots of drivers who are not in it.
+- [x] A driver whose pace is far out (more than 3 interquartile ranges from the quartiles) is drawn on the edge of the scatter plot with its real value in the label and in the note under it, and the other drivers keep a readable scale.
+- [x] A team without a color in `config/team_colors.json` is drawn with `--team-unknown` and the page does not fail.
+- [x] The Features section shows only if `explain.json` has the champion's `model_version_id`; otherwise it is hidden with a notice.
+- [x] `model.html` shows the opening and first section of `MODEL_CARD.md` and keeps the rest in a closed `<details>`, links the SPEC 11 `.svg` charts by relative path and links back to the landing; `index.html` holds no text of the card and links to `model.html`.
 
 **Motion and design**
 
-- [ ] The four metric figures count from 0 to their value when the Results section enters the viewport, and show an em dash until the data loads.
-- [ ] Every section enters with an animation on scroll, and the scatter plot draws its points in sequence and moves them when the race changes.
-- [ ] With `prefers-reduced-motion: reduce` there is no animation and the final values show at once.
-- [ ] The hero circuit has one dot per driver of the last scored race, all on the track and moving at different speeds; with `prefers-reduced-motion: reduce` they stand still.
-- [ ] At 375 px wide there is no horizontal scroll, and at 1440 px no section overflows.
-- [ ] The page is dark with the `frontend-design` identity chosen in step 12, uses only the committed local fonts (OFL), and the text/background contrast is at least 4.5:1.
+- [x] The four metric figures count from 0 to their value when the Results section enters the viewport, and show an em dash until the data loads.
+- [x] Every section enters with an animation on scroll, and the scatter plot draws its points in sequence and moves them when the race changes.
+- [x] With `prefers-reduced-motion: reduce` there is no animation and the final values show at once.
+- [x] The hero circuit has one dot per driver of the last scored race, all on the track and moving at different speeds; with `prefers-reduced-motion: reduce` they stand still.
+- [x] At 375 px wide there is no horizontal scroll, and at 1440 px no section overflows.
+- [x] The page is dark with the `frontend-design` identity chosen in step 12, uses only the committed local fonts (OFL), and the text/background contrast is at least 4.5:1.
 
 **Process**
 
-- [ ] `uv run pytest tests`, `ruff check src scripts tests` and `ruff format --check src scripts tests` pass, and `pyproject.toml` is unchanged.
-- [ ] `DECISIONS.md` has the lines of step 1 and the line of the real run.
-- [ ] The real run is done by the user (step 14) and its result is recorded.
+- [x] `uv run pytest tests`, `ruff check src scripts tests` and `ruff format --check src scripts tests` pass, and `pyproject.toml` is unchanged.
+- [x] `DECISIONS.md` has the lines of step 1 and the line of the real run.
+- [x] The real run is done by the user (step 14) and its result is recorded.
 
 ---
 

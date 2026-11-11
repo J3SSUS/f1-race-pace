@@ -259,12 +259,32 @@ function raceRows(data, year, round) {
     .sort((a, b) => a.predicted_pace_delta_pct - b.predicted_pace_delta_pct || a.driver.localeCompare(b.driver));
 }
 
-/* The header of a race: its name, its date and whether its predictions were made after the race started. */
+/* A race is pending when it has predictions and no driver has a result yet: `prediction_results` joins the ground truth
+   with a LEFT JOIN, so before the race both `actual_pace_delta_pct` and `is_valid_row` are null. A race that has run
+   but whose drivers all lack a reliable pace has `is_valid_row` false, and is not pending. */
+function isPending(rows) {
+  return rows.length > 0 && rows.every((row) => row.actual_pace_delta_pct == null && row.is_valid_row == null);
+}
+
+/* The banner for a race that has been predicted and is waiting for its result: the latest race with predictions, if it
+   is pending. It does not depend on the race chosen in the selector. `null` when there is nothing to announce. */
+function pendingBanner(data) {
+  const races = racesWithPredictions(data);
+  if (races.length === 0) return null;
+  const race = races[races.length - 1];
+  if (!isPending(raceRows(data, race.year, race.round))) return null;
+  const header = raceHeader(race, []);
+  return { title: header.title, date: race.race_date, key: raceKey(race.year, race.round) };
+}
+
+/* The header of a race: its name, its date, whether its predictions were made after the race started and whether
+   the race is still waiting for its result. */
 function raceHeader(race, rows) {
   return {
     title: `R${race.round} ${race.event_name || `round ${race.round}`}`,
     date: race.race_date,
     late: rows.some((row) => row.is_late),
+    pending: isPending(rows),
   };
 }
 
@@ -360,6 +380,12 @@ function scatterModel(rows) {
     point.plotY = clamp(point.y);
   }
   return { points, excluded: rows.length - points.length, domain: { min, max }, ticks };
+}
+
+/* The drivers on the plot that are not in the new race, and so have to leave it. */
+function departing(onPlot, points) {
+  const staying = new Set(points.map((point) => point.driver));
+  return onPlot.filter((driver) => !staying.has(driver));
 }
 
 /* Which labels to show: the boxes come in priority order and one is kept only if it overlaps none already kept. */
@@ -673,9 +699,7 @@ function updateScatter(plot, model) {
   plot.svg.style.setProperty("--label-size", `${font.toFixed(1)}px`);
   plot.svg.style.setProperty("--dot-r", `${dotRadius.toFixed(1)}px`);
   const scale = drawAxes(plot, model);
-  const seen = new Set();
   model.points.forEach((point, index) => {
-    seen.add(point.driver);
     let group = plot.byDriver.get(point.driver);
     if (!group) {
       group = svgEl("g", { class: "point", "data-driver": point.driver });
@@ -705,6 +729,13 @@ function updateScatter(plot, model) {
     group.querySelector("title").textContent =
       `${point.driver} (${point.team}): predicted ${formatPace(point.x)}, actual ${formatPace(point.y)}${point.late ? ", late prediction" : ""}`;
   });
+  // A driver that is not in this race leaves the plot: without this its dot would stay where the last race put it.
+  for (const driver of departing([...plot.byDriver.keys()], model.points)) {
+    const group = plot.byDriver.get(driver);
+    group.classList.add("leaving");
+    plot.byDriver.delete(driver);
+    setTimeout(() => group.classList.contains("leaving") && group.remove(), 500);
+  }
   // Labels that would overlap are hidden (the tooltip and the table still name every driver); the biggest errors and
   // the off-scale points keep theirs.
   const placed = new Map(model.points.map((point) => [point.driver, placeLabel({
@@ -747,8 +778,15 @@ function revealWhenVisible(plot, section) {
   observer.observe(section);
 }
 
-function showScatter(plot, note, rows) {
+const PENDING_CHART = "The chart fills in after the race is run.";
+
+function showScatter(plot, note, rows, pending) {
   plot.rows = rows;
+  plot.svg.toggleAttribute("hidden", pending); // an SVG element has no `hidden` property, only the attribute
+  if (pending) {
+    note.textContent = PENDING_CHART;
+    return;
+  }
   plot.width = plot.svg.getBoundingClientRect().width;
   const model = scatterModel(rows);
   updateScatter(plot, model);
@@ -766,13 +804,16 @@ function redrawOnResize(plot, note) {
   if (typeof ResizeObserver !== "function") return;
   new ResizeObserver(() => {
     const width = plot.svg.getBoundingClientRect().width;
-    if (plot.rows.length > 0 && Math.abs(width - plot.width) > 1) showScatter(plot, note, plot.rows);
+    if (plot.rows.length > 0 && !plot.svg.hasAttribute("hidden") && width > 0 && Math.abs(width - plot.width) > 1) {
+      showScatter(plot, note, plot.rows, false);
+    }
   }).observe(plot.svg);
 }
 
 /* ---- Race section (DOM, checked by hand) ---- */
 
 const LATE_EXPLANATION = "Late: these predictions were made after the race had started, from Saturday data only.";
+const PENDING_EXPLANATION = "Predictions made before the race. The actual pace appears here once the race is run.";
 
 function lateMark() {
   const mark = el("span", "late-mark", "late");
@@ -780,14 +821,14 @@ function lateMark() {
   return mark;
 }
 
-function renderRaceTable(table, rows, colors) {
+function renderRaceTable(table, rows, colors, pending) {
   const head = el("thead");
   const headRow = el("tr");
   for (const label of ["Driver", "Team", "Predicted", "Actual"]) headRow.append(el("th", "", label));
   head.append(headRow);
   const body = el("tbody");
   for (const row of rows) {
-    const tr = el("tr", row.is_valid_row ? "" : "not-scored");
+    const tr = el("tr", pending || row.is_valid_row ? "" : "not-scored");
     const team = el("td", "team");
     const swatch = el("span", "swatch");
     swatch.setAttribute("aria-hidden", "true");
@@ -796,10 +837,26 @@ function renderRaceTable(table, rows, colors) {
     team.append(swatch, document.createTextNode(row.team));
     const predicted = el("td", "pace", formatPace(row.predicted_pace_delta_pct));
     if (row.is_late) predicted.append(" ", lateMark());
-    tr.append(el("td", "driver", row.driver), team, predicted, el("td", "pace", formatPace(row.actual_pace_delta_pct)));
+    const actual = el("td", pending ? "pace pending" : "pace", pending ? "pending" : formatPace(row.actual_pace_delta_pct));
+    tr.append(el("td", "driver", row.driver), team, predicted, actual);
     body.append(tr);
   }
   table.replaceChildren(head, body);
+}
+
+/* A strip at the top of the page: the latest race has its prediction and the real values are still to come. */
+function renderPendingBanner(data) {
+  const banner = document.getElementById("pending-banner");
+  if (!banner) return;
+  const info = pendingBanner(data);
+  banner.hidden = info === null;
+  if (info === null) return;
+  const link = el("a", "", "See the predictions");
+  link.href = "#race";
+  banner.replaceChildren(
+    `Prediction ready: ${info.title}${info.date ? `, ${info.date}` : ""}. The real values appear after the race. `,
+    link,
+  );
 }
 
 function renderRaceSection(data, colors) {
@@ -807,6 +864,7 @@ function renderRaceSection(data, colors) {
   const table = document.getElementById("race-table");
   const meta = document.getElementById("race-meta");
   const lateNote = document.getElementById("race-late-note");
+  const pendingNote = document.getElementById("race-pending-note");
   if (!select || !table || !meta) return;
   const races = racesWithPredictions(data);
   if (races.length === 0) {
@@ -829,15 +887,19 @@ function renderRaceSection(data, colors) {
   const show = (key) => {
     const race = races.find((r) => raceKey(r.year, r.round) === key);
     const rows = raceRows(data, race.year, race.round);
-    if (plot) showScatter(plot, note, rows);
     const header = raceHeader(race, rows);
+    if (plot) showScatter(plot, note, rows, header.pending);
     meta.replaceChildren(header.date ? `${header.title}, ${header.date}` : header.title);
     if (header.late) meta.append(" ", lateMark());
     if (lateNote) {
       lateNote.hidden = !header.late;
       lateNote.textContent = header.late ? LATE_EXPLANATION : "";
     }
-    renderRaceTable(table, rows, colors);
+    if (pendingNote) {
+      pendingNote.hidden = !header.pending;
+      pendingNote.textContent = header.pending ? PENDING_EXPLANATION : "";
+    }
+    renderRaceTable(table, rows, colors, header.pending);
   };
   select.value = raceKey(races[races.length - 1].year, races[races.length - 1].round); // the latest race
   select.addEventListener("change", () => show(select.value));
@@ -870,7 +932,7 @@ if (typeof module !== "undefined" && module.exports) {
   module.exports = {
     loadData, describeSource, formatMetric, findChampion, findBaseline, normalizeLive,
     buildResultsModel, lastScoredRace, valueAt,
-    formatPace, teamColor, racesWithPredictions, raceRows, raceHeader, raceKey, niceTicks, scatterModel, declutterLabels, placeLabel, featuresModel, runnerLaps, lapFraction, runnerTitle, PAGE_SIZE,
+    formatPace, teamColor, racesWithPredictions, raceRows, raceHeader, isPending, pendingBanner, raceKey, niceTicks, scatterModel, declutterLabels, placeLabel, departing, featuresModel, runnerLaps, lapFraction, runnerTitle, PAGE_SIZE,
   };
 }
 
@@ -887,6 +949,7 @@ if (typeof document !== "undefined" && typeof SITE_CONFIG !== "undefined" && doc
     }
     if (result.data) {
       renderHero(result.data);
+      renderPendingBanner(result.data);
       startRunners(result.data, SITE_CONFIG.teamColors);
       renderResults(result.data);
       renderRaceSection(result.data, SITE_CONFIG.teamColors);

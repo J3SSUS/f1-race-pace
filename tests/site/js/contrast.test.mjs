@@ -18,7 +18,7 @@ const ratio = (a, b) => {
 };
 
 test("the palette defines every color the pairs below use", () => {
-  for (const name of ["bg", "panel", "line", "text", "muted", "champion", "good", "flag", "team-unknown"]) {
+  for (const name of ["bg", "panel", "line", "text", "muted", "champion", "good", "flag", "pending", "team-unknown"]) {
     assert.match(color[name] ?? "", /^#[0-9a-fA-F]{6}$/, name);
   }
 });
@@ -35,6 +35,7 @@ const TEXT_PAIRS = [
   ["flag", "bg", "the late mark and the notices in the page"],
   ["flag", "panel", "the late mark on a hovered row"],
   ["bg", "flag", "the banner for a fallback notice"],
+  ["bg", "pending", "the banner for a race that is predicted and waiting for its result"],
 ];
 
 for (const [fg, bg, where] of TEXT_PAIRS) {
