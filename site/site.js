@@ -369,6 +369,28 @@ function raceHeader(race, rows) {
   };
 }
 
+/* ---- Features (pure part, tested with Node) ---- */
+
+/* The permutation importance of the champion's features, biggest first. It is only valid for the model it was
+   computed for: if `explain.json` belongs to another model version the section shows a notice and no bars. */
+function featuresModel(explain, championId) {
+  if (!explain || !Array.isArray(explain.importance)) return { status: "missing" };
+  if (explain.model_version_id !== championId) {
+    return { status: "mismatch", explainVersion: explain.model_version_id, championVersion: championId };
+  }
+  const isNumber = (value) => typeof value === "number" && Number.isFinite(value);
+  const rows = explain.importance
+    .filter((item) => typeof item.feature === "string" && isNumber(item.mae_increase_mean))
+    .map((item) => ({
+      feature: item.feature,
+      label: item.feature.replace(/_/g, " "),
+      mean: item.mae_increase_mean,
+      std: isNumber(item.mae_increase_std) ? item.mae_increase_std : null,
+    }))
+    .sort((a, b) => b.mean - a.mean || a.feature.localeCompare(b.feature));
+  return { status: "ok", rows, scale: Math.max(0, ...rows.map((row) => row.mean)) };
+}
+
 /* ---- Scatter plot (pure parts, tested with Node) ---- */
 
 /* Round axis bounds and ticks (a step of 1, 2 or 5 times a power of ten) that contain [min, max]. */
@@ -536,6 +558,33 @@ function renderResults(data) {
     }
   }, { threshold: 0.3 });
   observer.observe(section);
+}
+
+/* ---- Features (DOM, checked by hand) ---- */
+
+function renderFeatures(data, explain) {
+  const section = document.getElementById("features");
+  const holder = document.getElementById("features-importance");
+  if (!section || !holder) return;
+  const model = featuresModel(explain, data.champion.model_version_id);
+  section.hidden = false;
+  holder.replaceChildren();
+  if (model.status !== "ok") {
+    holder.append(el("p", "features-notice", model.status === "mismatch"
+      ? `The feature importance on file explains model version ${model.explainVersion}, not the current champion (version ${model.championVersion}), so it is not shown until it is regenerated.`
+      : "The feature importance of the champion is not available."));
+    return;
+  }
+  const list = el("ol", "feature-bars");
+  for (const row of model.rows) {
+    const item = el("li", "feature-bar");
+    const bar = el("span", "bar");
+    bar.style.width = model.scale === 0 ? "0%" : `${(Math.max(0, row.mean) / model.scale) * 100}%`;
+    const value = row.std === null ? formatMetric("mae", row.mean) : `${formatMetric("mae", row.mean)} \u00b1 ${formatMetric("mae", row.std)}`;
+    item.append(el("span", "feature-label", row.label), bar, el("span", "feature-value", value));
+    list.append(item);
+  }
+  holder.append(list);
 }
 
 /* ---- Scatter plot (DOM, checked by hand) ---- */
@@ -732,7 +781,7 @@ if (typeof module !== "undefined" && module.exports) {
   module.exports = {
     loadData, describeSource, formatMetric, findChampion, findBaseline, normalizeLive,
     buildResultsModel, lastScoredRace, valueAt,
-    formatPace, teamColor, racesWithPredictions, raceRows, raceHeader, raceKey, niceTicks, scatterModel, declutterLabels, PAGE_SIZE,
+    formatPace, teamColor, racesWithPredictions, raceRows, raceHeader, raceKey, niceTicks, scatterModel, declutterLabels, featuresModel, PAGE_SIZE,
   };
 }
 
@@ -750,6 +799,7 @@ if (typeof document !== "undefined" && typeof SITE_CONFIG !== "undefined" && doc
       renderHero(result.data);
       renderResults(result.data);
       renderRaceSection(result.data, SITE_CONFIG.teamColors);
+      renderFeatures(result.data, SITE_CONFIG.championExplain);
     }
   });
 }

@@ -28,3 +28,8 @@ section[hidden], #notice[hidden] { display: none; }
 @media (prefers-reduced-motion: reduce) { #scatter-plot .point { opacity: 1; transition: none; } }
 #scatter-plot .point.label-hidden .point-label { display: none; }
 #scatter-plot .point.offscale .dot { stroke: currentColor; stroke-width: 2; }
+.feature-bars { list-style: none; padding: 0; }
+.feature-bar { display: grid; gap: 0.5rem; grid-template-columns: 12rem 1fr 9rem; align-items: center; }
+.feature-bar .bar { background: currentColor; display: block; height: 0.6rem; }
+.feature-value { font-variant-numeric: tabular-nums; text-align: right; }
+.features-notice { font-style: italic; }
