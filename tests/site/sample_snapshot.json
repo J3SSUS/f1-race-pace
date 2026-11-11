@@ -109,7 +109,7 @@
       "predicted_pace_delta_pct": -0.62,
       "actual_pace_delta_pct": -0.55,
       "is_valid_row": true,
-      "is_late": true
+      "is_late": false
     },
     {
       "year": 2026,
@@ -119,7 +119,7 @@
       "predicted_pace_delta_pct": -0.1,
       "actual_pace_delta_pct": -0.21,
       "is_valid_row": true,
-      "is_late": true
+      "is_late": false
     },
     {
       "year": 2026,
@@ -129,7 +129,7 @@
       "predicted_pace_delta_pct": 0.8,
       "actual_pace_delta_pct": 0.95,
       "is_valid_row": true,
-      "is_late": true
+      "is_late": false
     },
     {
       "year": 2026,
@@ -149,7 +149,7 @@
       "predicted_pace_delta_pct": -0.05,
       "actual_pace_delta_pct": 0.1,
       "is_valid_row": true,
-      "is_late": false
+      "is_late": true
     },
     {
       "year": 2026,
@@ -159,7 +159,7 @@
       "predicted_pace_delta_pct": 1.2,
       "actual_pace_delta_pct": null,
       "is_valid_row": false,
-      "is_late": false
+      "is_late": true
     }
   ]
 }

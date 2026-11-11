@@ -7,3 +7,9 @@ section[hidden], #notice[hidden] { display: none; }
 .race-bar { display: grid; gap: 0.25rem; grid-template-columns: 12rem 1fr 1fr auto; align-items: center; }
 .bar { background: currentColor; display: block; height: 0.6rem; }
 .bar.baseline { opacity: 0.4; }
+
+:root { --team-unknown: #8a8f98; }
+.swatch { background: var(--team, var(--team-unknown)); display: inline-block; height: 0.8rem; margin-right: 0.4rem; width: 0.8rem; }
+.pace { font-variant-numeric: tabular-nums; text-align: right; }
+.not-scored { opacity: 0.55; }
+.late-mark { border: 1px solid currentColor; border-radius: 0.2rem; font-size: 0.7rem; padding: 0 0.3rem; text-transform: uppercase; }

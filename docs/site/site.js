@@ -224,6 +224,50 @@ function valueAt(target, progress) {
   return target * (1 - (1 - progress) ** 3);
 }
 
+/* ---- Race table (pure parts, tested with Node) ---- */
+
+const raceKey = (year, round) => `${year}-${round}`;
+
+/* Pace delta in percent with two decimals; a missing value is an em dash, a tiny negative one is not "-0.00%". */
+function formatPace(value) {
+  if (typeof value !== "number" || !Number.isFinite(value)) return "\u2014";
+  const text = value.toFixed(2);
+  return `${/^-0\.0+$/.test(text) ? text.slice(1) : text}%`;
+}
+
+/* The color of a team, or null if it has none: the page then uses the neutral `--team-unknown`. */
+function teamColor(colors, team) {
+  return Object.prototype.hasOwnProperty.call(colors, team) ? colors[team] : null;
+}
+
+/* The races that have predictions, oldest first, with their name and date from `races`. */
+function racesWithPredictions(data) {
+  const found = new Map();
+  for (const row of data.results) found.set(raceKey(row.year, row.round), { year: row.year, round: row.round });
+  return [...found.values()]
+    .map(({ year, round }) => {
+      const race = data.races.find((r) => r.year === year && r.round === round);
+      return { year, round, event_name: race ? race.event_name : null, race_date: race ? race.race_date : null };
+    })
+    .sort((a, b) => a.year - b.year || a.round - b.round);
+}
+
+/* The rows of one race, fastest predicted pace first (ties by driver). */
+function raceRows(data, year, round) {
+  return data.results
+    .filter((row) => row.year === year && row.round === round)
+    .sort((a, b) => a.predicted_pace_delta_pct - b.predicted_pace_delta_pct || a.driver.localeCompare(b.driver));
+}
+
+/* The header of a race: its name, its date and whether its predictions were made after the race started. */
+function raceHeader(race, rows) {
+  return {
+    title: `R${race.round} ${race.event_name || `round ${race.round}`}`,
+    date: race.race_date,
+    late: rows.some((row) => row.is_late),
+  };
+}
+
 /* ---- Hero and Results (DOM, checked by hand) ---- */
 
 function prefersReducedMotion() {
@@ -309,10 +353,69 @@ function renderResults(data) {
   observer.observe(section);
 }
 
+/* ---- Race section (DOM, checked by hand) ---- */
+
+function lateMark() {
+  const mark = el("span", "late-mark", "late");
+  mark.title = "Predicted after the race had started";
+  return mark;
+}
+
+function renderRaceTable(table, rows, colors) {
+  const head = el("thead");
+  const headRow = el("tr");
+  for (const label of ["Driver", "Team", "Predicted", "Actual"]) headRow.append(el("th", "", label));
+  head.append(headRow);
+  const body = el("tbody");
+  for (const row of rows) {
+    const tr = el("tr", row.is_valid_row ? "" : "not-scored");
+    const team = el("td", "team");
+    const swatch = el("span", "swatch");
+    swatch.setAttribute("aria-hidden", "true");
+    const color = teamColor(colors, row.team);
+    if (color) swatch.style.setProperty("--team", color);
+    team.append(swatch, document.createTextNode(row.team));
+    const predicted = el("td", "pace", formatPace(row.predicted_pace_delta_pct));
+    if (row.is_late) predicted.append(" ", lateMark());
+    tr.append(el("td", "driver", row.driver), team, predicted, el("td", "pace", formatPace(row.actual_pace_delta_pct)));
+    body.append(tr);
+  }
+  table.replaceChildren(head, body);
+}
+
+function renderRaceSection(data, colors) {
+  const select = document.getElementById("race-select");
+  const table = document.getElementById("race-table");
+  const meta = document.getElementById("race-meta");
+  if (!select || !table || !meta) return;
+  const races = racesWithPredictions(data);
+  if (races.length === 0) {
+    meta.textContent = "No predictions yet.";
+    return;
+  }
+  select.replaceChildren(...races.map((race) => {
+    const option = el("option", "", raceHeader(race, []).title);
+    option.value = raceKey(race.year, race.round);
+    return option;
+  }));
+  const show = (key) => {
+    const race = races.find((r) => raceKey(r.year, r.round) === key);
+    const rows = raceRows(data, race.year, race.round);
+    const header = raceHeader(race, rows);
+    meta.replaceChildren(header.date ? `${header.title}, ${header.date}` : header.title);
+    if (header.late) meta.append(" ", lateMark());
+    renderRaceTable(table, rows, colors);
+  };
+  select.value = raceKey(races[races.length - 1].year, races[races.length - 1].round); // the latest race
+  select.addEventListener("change", () => show(select.value));
+  show(select.value);
+}
+
 if (typeof module !== "undefined" && module.exports) {
   module.exports = {
     loadData, describeSource, formatMetric, findChampion, findBaseline, normalizeLive,
-    buildResultsModel, lastScoredRace, valueAt, PAGE_SIZE,
+    buildResultsModel, lastScoredRace, valueAt,
+    formatPace, teamColor, racesWithPredictions, raceRows, raceHeader, raceKey, PAGE_SIZE,
   };
 }
 
@@ -329,6 +432,7 @@ if (typeof document !== "undefined" && typeof SITE_CONFIG !== "undefined" && doc
     if (result.data) {
       renderHero(result.data);
       renderResults(result.data);
+      renderRaceSection(result.data, SITE_CONFIG.teamColors);
     }
   });
 }
