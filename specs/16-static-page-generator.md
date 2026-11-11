@@ -155,6 +155,7 @@ Each step leaves `uv run pytest tests` green and can be committed on its own. Th
 - [ ] The race selector defaults to the latest race with a prediction, and changing the race changes the table and the scatter plot.
 - [ ] A row with `is_late = true` shows the late mark in the table, in the scatter plot and in the race header, and a row with `is_late = false` shows none.
 - [ ] A row with `is_valid_row = false` or no actual pace stays in the table and does not appear in the scatter plot.
+- [ ] A driver whose pace is far out (more than 3 interquartile ranges from the quartiles) is drawn on the edge of the scatter plot with its real value in the label and in the note under it, and the other drivers keep a readable scale.
 - [ ] A team without a color in `config/team_colors.json` is drawn with `--team-unknown` and the page does not fail.
 - [ ] The Features section shows only if `explain.json` has the champion's `model_version_id`; otherwise it is hidden with a notice.
 - [ ] `model.html` shows the opening and first section of `MODEL_CARD.md` and keeps the rest in a closed `<details>`, links the SPEC 11 `.svg` charts by relative path and links back to the landing; `index.html` holds no text of the card and links to `model.html`.

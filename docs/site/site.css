@@ -13,3 +13,18 @@ section[hidden], #notice[hidden] { display: none; }
 .pace { font-variant-numeric: tabular-nums; text-align: right; }
 .not-scored { opacity: 0.55; }
 .late-mark { border: 1px solid currentColor; border-radius: 0.2rem; font-size: 0.7rem; padding: 0 0.3rem; text-transform: uppercase; }
+
+#scatter-plot { display: block; height: auto; max-width: 100%; width: 100%; }
+#scatter-plot .grid { stroke: currentColor; stroke-opacity: 0.12; }
+#scatter-plot .grid.zero { stroke-opacity: 0.4; }
+#scatter-plot .diagonal { stroke: currentColor; stroke-dasharray: 4 4; stroke-opacity: 0.5; }
+#scatter-plot .tick, #scatter-plot .axis-label, #scatter-plot .point-label { fill: currentColor; font-size: 12px; }
+#scatter-plot .point { opacity: 0; transition: transform 0.6s ease, opacity 0.4s ease calc(var(--i, 0) * 40ms); }
+#scatter-plot.revealed .point { opacity: 1; }
+#scatter-plot .point.leaving { opacity: 0; transition-delay: 0s; }
+#scatter-plot .dot { fill: var(--team, var(--team-unknown)); }
+#scatter-plot .late-ring { display: none; fill: none; stroke: var(--team, var(--team-unknown)); stroke-dasharray: 3 2; }
+#scatter-plot .point.late .late-ring { display: inline; }
+@media (prefers-reduced-motion: reduce) { #scatter-plot .point { opacity: 1; transition: none; } }
+#scatter-plot .point.label-hidden .point-label { display: none; }
+#scatter-plot .point.offscale .dot { stroke: currentColor; stroke-width: 2; }

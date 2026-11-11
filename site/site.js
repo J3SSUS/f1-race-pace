@@ -369,6 +369,90 @@ function raceHeader(race, rows) {
   };
 }
 
+/* ---- Scatter plot (pure parts, tested with Node) ---- */
+
+/* Round axis bounds and ticks (a step of 1, 2 or 5 times a power of ten) that contain [min, max]. */
+function niceTicks(min, max, count = 6) {
+  let lo = min;
+  let hi = max;
+  if (hi - lo === 0) {
+    lo -= 1;
+    hi += 1;
+  }
+  const rough = (hi - lo) / (count - 1);
+  const magnitude = 10 ** Math.floor(Math.log10(rough));
+  const residual = rough / magnitude;
+  const step = (residual <= 1 ? 1 : residual <= 2 ? 2 : residual <= 5 ? 5 : 10) * magnitude;
+  const first = Math.floor(lo / step) * step;
+  const last = Math.ceil(hi / step) * step;
+  const ticks = [];
+  for (let i = 0; first + i * step <= last + step / 2; i += 1) ticks.push(Number((first + i * step).toFixed(10)));
+  return { ticks, min: ticks[0], max: ticks[ticks.length - 1] };
+}
+
+function quantile(sorted, q) {
+  const position = (sorted.length - 1) * q;
+  const below = Math.floor(position);
+  const above = Math.ceil(position);
+  return sorted[below] + (sorted[above] - sorted[below]) * (position - below);
+}
+
+/* Values farther than three interquartile ranges from the quartiles are off the scale (Tukey's far-out fences). With
+   fewer than eight values there is no meaningful quartile, so nothing is off the scale. */
+function farOutFences(values) {
+  if (values.length < 8) return { low: -Infinity, high: Infinity };
+  const sorted = [...values].sort((a, b) => a - b);
+  const q1 = quantile(sorted, 0.25);
+  const q3 = quantile(sorted, 0.75);
+  return { low: q1 - 3 * (q3 - q1), high: q3 + 3 * (q3 - q1) };
+}
+
+/* The points of one race for the scatter plot: predicted pace (x) against actual pace (y). A row with no reliable
+   actual pace (`is_valid_row` false or no value) stays in the table and is left out here; `excluded` counts them.
+   Both axes share one domain that always contains zero, so the diagonal is the perfect prediction. The domain ignores
+   far-out values, so one extreme driver does not squeeze everyone else into a dot: that point is drawn on the edge
+   (`plotX`, `plotY`) with `offScale` true, and keeps its real `x` and `y`. */
+function scatterModel(rows) {
+  const isNumber = (value) => typeof value === "number" && Number.isFinite(value);
+  const shown = rows.filter(
+    (row) => row.is_valid_row && isNumber(row.actual_pace_delta_pct) && isNumber(row.predicted_pace_delta_pct),
+  );
+  const points = shown.map((row) => ({
+    driver: row.driver,
+    team: row.team,
+    x: row.predicted_pace_delta_pct,
+    y: row.actual_pace_delta_pct,
+    late: Boolean(row.is_late),
+  }));
+  const all = points.flatMap((p) => [p.x, p.y]);
+  const { low, high } = farOutFences(all);
+  const inside = (value) => value >= low && value <= high;
+  const values = [0, ...all.filter(inside)];
+  const lo = Math.min(...values);
+  const hi = Math.max(...values);
+  const pad = (hi - lo) * 0.06;
+  const { ticks, min, max } = niceTicks(lo - pad, hi + pad);
+  const clamp = (value) => Math.min(max, Math.max(min, value));
+  for (const point of points) {
+    point.offScale = !inside(point.x) || !inside(point.y);
+    point.plotX = clamp(point.x);
+    point.plotY = clamp(point.y);
+  }
+  return { points, excluded: rows.length - points.length, domain: { min, max }, ticks };
+}
+
+/* Which labels to show: the boxes come in priority order and one is kept only if it overlaps none already kept. */
+function declutterLabels(boxes) {
+  const kept = [];
+  for (const box of boxes) {
+    const overlaps = kept.some(
+      (other) => box.left < other.right && box.right > other.left && box.top < other.bottom && box.bottom > other.top,
+    );
+    if (!overlaps) kept.push(box);
+  }
+  return new Set(kept.map((box) => box.key));
+}
+
 /* ---- Hero and Results (DOM, checked by hand) ---- */
 
 function prefersReducedMotion() {
@@ -454,6 +538,132 @@ function renderResults(data) {
   observer.observe(section);
 }
 
+/* ---- Scatter plot (DOM, checked by hand) ---- */
+
+const SVG_NS = "http://www.w3.org/2000/svg";
+const PLOT = { width: 560, height: 520, left: 56, right: 16, top: 16, bottom: 48 };
+
+function svgEl(tag, attributes = {}, text) {
+  const node = document.createElementNS(SVG_NS, tag);
+  for (const [name, value] of Object.entries(attributes)) node.setAttribute(name, value);
+  if (text !== undefined) node.textContent = text;
+  return node;
+}
+
+function createScatter(svg, colors) {
+  const axes = svgEl("g", { class: "axes" });
+  const points = svgEl("g", { class: "points" });
+  svg.replaceChildren(axes, points);
+  return { svg, axes, points, colors, byDriver: new Map(), revealed: false };
+}
+
+/* Axes, grid and the diagonal (perfect prediction) for the domain of the race. */
+function drawAxes(plot, model) {
+  const { min, max } = model.domain;
+  const x = (value) => PLOT.left + ((value - min) / (max - min)) * (PLOT.width - PLOT.left - PLOT.right);
+  const y = (value) => PLOT.height - PLOT.bottom - ((value - min) / (max - min)) * (PLOT.height - PLOT.top - PLOT.bottom);
+  plot.axes.replaceChildren();
+  for (const tick of model.ticks) {
+    plot.axes.append(
+      svgEl("line", { class: tick === 0 ? "grid zero" : "grid", x1: x(tick), x2: x(tick), y1: y(min), y2: y(max) }),
+      svgEl("line", { class: tick === 0 ? "grid zero" : "grid", x1: x(min), x2: x(max), y1: y(tick), y2: y(tick) }),
+      svgEl("text", { class: "tick", x: x(tick), y: PLOT.height - PLOT.bottom + 16, "text-anchor": "middle" }, String(tick)),
+      svgEl("text", { class: "tick", x: PLOT.left - 8, y: y(tick) + 4, "text-anchor": "end" }, String(tick)),
+    );
+  }
+  plot.axes.append(
+    svgEl("line", { class: "diagonal", x1: x(min), y1: y(min), x2: x(max), y2: y(max) }),
+    svgEl("text", { class: "axis-label", x: (PLOT.left + PLOT.width - PLOT.right) / 2, y: PLOT.height - 8, "text-anchor": "middle" }, "Predicted pace (%)"),
+    svgEl("text", { class: "axis-label", transform: `translate(14 ${(PLOT.top + PLOT.height - PLOT.bottom) / 2}) rotate(-90)`, "text-anchor": "middle" }, "Actual pace (%)"),
+  );
+  return { x, y };
+}
+
+/* Draw the points of a race. A driver already on the plot moves to the new position (a CSS transition on the
+   transform); a new one appears in sequence; one that is not in the race leaves. */
+function updateScatter(plot, model) {
+  const scale = drawAxes(plot, model);
+  const seen = new Set();
+  model.points.forEach((point, index) => {
+    seen.add(point.driver);
+    let group = plot.byDriver.get(point.driver);
+    if (!group) {
+      group = svgEl("g", { class: "point", "data-driver": point.driver });
+      group.style.transition = "none";
+      group.append(
+        svgEl("circle", { class: "late-ring", r: 10 }),
+        svgEl("circle", { class: "dot", r: 6 }),
+        svgEl("text", { class: "point-label", x: 9, y: -7 }, point.driver),
+      );
+      group.append(svgEl("title", {}, point.driver));
+      plot.points.append(group);
+      plot.byDriver.set(point.driver, group);
+      group.style.setProperty("--i", String(index));
+      group.style.transform = `translate(${scale.x(point.plotX)}px, ${scale.y(point.plotY)}px)`;
+      group.getBoundingClientRect(); // commit the starting position before the transition is switched back on
+      group.style.transition = "";
+    } else {
+      group.classList.remove("leaving");
+      group.style.transform = `translate(${scale.x(point.plotX)}px, ${scale.y(point.plotY)}px)`;
+    }
+    group.classList.toggle("late", point.late);
+    group.classList.toggle("offscale", point.offScale);
+    group.querySelector(".point-label").textContent = point.offScale ? `${point.driver} ${formatPace(point.y)}` : point.driver;
+    const color = teamColor(plot.colors, point.team);
+    if (color) group.style.setProperty("--team", color);
+    else group.style.removeProperty("--team");
+    group.querySelector("title").textContent =
+      `${point.driver} (${point.team}): predicted ${formatPace(point.x)}, actual ${formatPace(point.y)}${point.late ? ", late prediction" : ""}`;
+  });
+  // Labels that would overlap are hidden (the tooltip and the table still name every driver); the biggest errors and
+  // the off-scale points keep theirs.
+  const priority = (point) => (point.offScale ? Infinity : Math.abs(point.y - point.x));
+  const boxes = [...model.points].sort((a, b) => priority(b) - priority(a)).map((point) => {
+    const left = scale.x(point.plotX) + 9;
+    const width = 7 * (point.offScale ? `${point.driver} ${formatPace(point.y)}` : point.driver).length;
+    return { key: point.driver, left, right: left + width, top: scale.y(point.plotY) - 19, bottom: scale.y(point.plotY) - 5 };
+  });
+  const visible = declutterLabels(boxes);
+  for (const point of model.points) plot.byDriver.get(point.driver).classList.toggle("label-hidden", !visible.has(point.driver));
+  for (const [driver, group] of plot.byDriver) {
+    if (seen.has(driver)) continue;
+    group.classList.add("leaving");
+    plot.byDriver.delete(driver);
+    setTimeout(() => group.classList.contains("leaving") && group.remove(), 500);
+  }
+}
+
+/* The points appear in sequence the first time the plot enters the view (at once if the browser cannot tell). */
+function revealWhenVisible(plot, section) {
+  const reveal = () => {
+    plot.revealed = true;
+    plot.svg.classList.add("revealed");
+  };
+  if (typeof IntersectionObserver !== "function") {
+    reveal();
+    return;
+  }
+  const observer = new IntersectionObserver((entries) => {
+    if (entries.some((entry) => entry.isIntersecting)) {
+      observer.disconnect();
+      reveal();
+    }
+  }, { threshold: 0.2 });
+  observer.observe(section);
+}
+
+function showScatter(plot, note, rows) {
+  const model = scatterModel(rows);
+  updateScatter(plot, model);
+  note.textContent = model.points.length === 0
+    ? "No driver has a reliable actual pace in this race yet."
+    : [
+      `${model.points.length} of ${rows.length} drivers shown`,
+      model.excluded ? `${model.excluded} without a reliable actual pace` : null,
+      ...model.points.filter((p) => p.offScale).map((p) => `${p.driver} is off the scale (predicted ${formatPace(p.x)}, actual ${formatPace(p.y)}) and drawn on the edge`),
+    ].filter(Boolean).join("; ") + ".";
+}
+
 /* ---- Race section (DOM, checked by hand) ---- */
 
 function lateMark() {
@@ -499,9 +709,15 @@ function renderRaceSection(data, colors) {
     option.value = raceKey(race.year, race.round);
     return option;
   }));
+  const svg = document.getElementById("scatter-plot");
+  const note = document.getElementById("scatter-note");
+  const section = document.getElementById("scatter");
+  const plot = svg && note && section ? createScatter(svg, colors) : null;
+  if (plot) revealWhenVisible(plot, section);
   const show = (key) => {
     const race = races.find((r) => raceKey(r.year, r.round) === key);
     const rows = raceRows(data, race.year, race.round);
+    if (plot) showScatter(plot, note, rows);
     const header = raceHeader(race, rows);
     meta.replaceChildren(header.date ? `${header.title}, ${header.date}` : header.title);
     if (header.late) meta.append(" ", lateMark());
@@ -516,7 +732,7 @@ if (typeof module !== "undefined" && module.exports) {
   module.exports = {
     loadData, describeSource, formatMetric, findChampion, findBaseline, normalizeLive,
     buildResultsModel, lastScoredRace, valueAt,
-    formatPace, teamColor, racesWithPredictions, raceRows, raceHeader, raceKey, PAGE_SIZE,
+    formatPace, teamColor, racesWithPredictions, raceRows, raceHeader, raceKey, niceTicks, scatterModel, declutterLabels, PAGE_SIZE,
   };
 }
 
