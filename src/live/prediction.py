@@ -49,6 +49,27 @@ class Models:
     baseline: Pipeline  # the qualifying baseline of the champion's sampling run
 
 
+def find_baseline(client, ml: MlflowClient, sampling_run_id: str, rows: list[dict] | None = None) -> dict:
+    """The `model_versions` row (`model_version_id`, `mlflow_run_id`) of the baseline of a sampling run.
+
+    It is the row with algorithm `baseline` whose MLflow run carries the `sampling_run_id` tag; a baseline of another
+    sampling run is never picked and the newest one wins. `rows` are the `model_versions` rows when the caller has
+    already read them. Raises `PredictionError` naming the sampling run when there is none. Nothing is written.
+    """
+    if rows is None:
+        rows = read_table(client, "model_versions", "model_version_id,mlflow_run_id,algorithm")
+    for row in sorted((r for r in rows if r["algorithm"] == "baseline"), key=lambda r: -r["model_version_id"]):
+        try:
+            tags = ml.get_run(row["mlflow_run_id"]).data.tags
+        except MlflowException:
+            continue  # a model_versions row whose run is gone cannot be it
+        if tags.get(SAMPLING_TAG) == sampling_run_id:
+            return row
+    raise PredictionError(
+        f"there is no baseline model version for the champion's sampling run {sampling_run_id}: run scripts/baseline.py"
+    )
+
+
 def _check_and_find(client, uri: str) -> tuple[str, str]:
     """`(champion run id, baseline run id)`, after every check that needs no model; nothing is loaded here."""
     ml = MlflowClient(uri)
@@ -75,16 +96,8 @@ def _check_and_find(client, uri: str) -> tuple[str, str]:
             f"({catalog.version}, feature_set_id {expected}): predicting would feed it other features"
         )
 
-    for row in sorted((r for r in rows if r["algorithm"] == "baseline"), key=lambda r: -r["model_version_id"]):
-        try:
-            tags = ml.get_run(row["mlflow_run_id"]).data.tags
-        except MlflowException:
-            continue  # a model_versions row whose run is gone cannot be it
-        if tags.get(SAMPLING_TAG) == sampling_run_id:
-            return run_id, row["mlflow_run_id"]
-    raise PredictionError(
-        f"there is no baseline model version for the champion's sampling run {sampling_run_id}: run scripts/baseline.py"
-    )
+    baseline = find_baseline(client, ml, sampling_run_id, rows=rows)
+    return run_id, baseline["mlflow_run_id"]
 
 
 def load_models(client=None, tracking_uri: str | None = None) -> Models:
