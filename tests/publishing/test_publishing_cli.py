@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 from publishing_helpers import golden_client
 
+from common.supabase_tables import PRIVATE_TABLES
 from publishing.snapshot import build_snapshot
 from sitegen.inputs import read_inputs
 
@@ -49,11 +50,12 @@ def raw():
     return json.loads((GOLDEN / "raw_rows.json").read_text())
 
 
-def run(cli, site_root, out_dir, raw, *, environ=ENV, client=None, **kw):
+def run(cli, site_root, out_dir, raw, *, environ=ENV, client=None, argv=(), **kw):
     lines = []
+    kw.setdefault("root", site_root)
     kw.setdefault("client_factory", lambda url, key: client or golden_client(raw))
     kw.setdefault("reader", partial(read_inputs, site_root, {"SUPABASE_URL": URL, "SUPABASE_ANON_KEY": ANON}))
-    code = cli.main(["--output-dir", str(out_dir)], environ=environ, clock=lambda: NOW, out=lines.append, **kw)
+    code = cli.main(["--output-dir", str(out_dir), *argv], environ=environ, clock=lambda: NOW, out=lines.append, **kw)
     return code, lines
 
 
@@ -190,3 +192,71 @@ def test_the_same_data_and_time_give_the_same_bytes(cli, site_root, tmp_path, ra
     assert run(cli, site_root, second, raw)[0] == 0
     assert (first / "snapshot.json").read_bytes() == (second / "snapshot.json").read_bytes()
     assert (first / "model.html").read_bytes() == (second / "model.html").read_bytes()
+
+
+# --- the control in the flow ---
+
+
+def test_a_clean_run_runs_the_control_over_the_built_site_and_says_how_to_commit(cli, site_root, tmp_path, raw):
+    code, lines = run(cli, site_root, site_root / "site", raw)
+    assert code == 0, lines
+    assert lines[-2] == "control of exposure: nothing found in the 16 files git would publish under site/"
+    assert lines[-1] == "commit and push are manual: git add site && git commit && git push"
+
+
+def test_a_readable_private_table_stops_it_before_anything_is_read_or_written(cli, site_root, tmp_path, raw):
+    out_dir = tmp_path / "out"
+    client = golden_client(raw, denied=[t for t in PRIVATE_TABLES if t != "drift_reports"])
+    client.tables["drift_reports"] = []
+    code, lines = run(cli, site_root, out_dir, raw, client=client)
+    assert code == 1
+    assert lines == ["STOPPED: the anon key can read the private table drift_reports; fix its RLS before publishing"]
+    assert "champion_history" not in [table for table, _ in client.queries]  # no public read either
+    assert not out_dir.exists()
+
+
+def test_a_failure_that_is_not_a_permission_error_is_not_read_as_denied(cli, site_root, tmp_path, raw):
+    out_dir = tmp_path / "out"
+    client = golden_client(raw, denied=(), error=ConnectionError(f"{URL} {ANON}"))
+    code, lines = run(cli, site_root, out_dir, raw, client=client)
+    assert code == 1
+    assert lines == ["STOPPED: feature_sets: ConnectionError"]
+    assert not out_dir.exists()
+
+
+def test_a_finding_stops_it_with_exit_code_1_and_names_the_file_and_the_rule_only(cli, site_root, tmp_path, raw):
+    leaked = "sb_secret_" + "z" * 30
+    (site_root / "site" / "leak.js").write_text(f"const KEY = '{leaked}';")
+    code, lines = run(cli, site_root, site_root / "site", raw)
+    assert code == 1
+    assert lines[-2] == "found: site/leak.js (service-key)"
+    assert lines[-1] == "STOPPED: the control of exposure found 1 problem(s) in the files git would publish"
+    assert leaked not in "\n".join(lines)
+    assert "commit and push are manual" not in "\n".join(lines)
+
+
+def test_check_only_runs_just_the_control_with_no_network_no_env_and_no_file_written(cli, site_root, tmp_path, raw):
+    def no_network(*args):
+        raise AssertionError("check-only must not create a client")
+
+    out_dir = tmp_path / "out"
+    code, lines = run(cli, site_root, out_dir, raw, environ={}, client_factory=no_network, argv=["--check-only"])
+    assert code == 0
+    assert lines == ["control of exposure: nothing found in the 1 files git would publish under site/"]
+    assert not out_dir.exists()
+    assert not (site_root / "site" / "snapshot.json").exists()
+
+
+def test_check_only_exits_with_1_when_it_finds_something(cli, site_root, tmp_path, raw):
+    (site_root / "site" / "page.html").write_text("fetch('/rest/v1/drift_reports')")
+    code, lines = run(cli, site_root, tmp_path / "out", raw, environ={}, argv=["--check-only"])
+    assert code == 1
+    assert lines[0] == "found: site/page.html (private-table)"
+    assert lines[-1].startswith("STOPPED: the control of exposure found 1 problem(s)")
+
+
+def test_check_only_stops_when_git_cannot_list_the_files(cli, tmp_path, raw):
+    lines = []
+    code = cli.main(["--check-only"], root=tmp_path, out=lines.append)  # a folder with no repository
+    assert code == 1
+    assert lines == ["STOPPED: git ls-files failed: CalledProcessError"]
