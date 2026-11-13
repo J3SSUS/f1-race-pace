@@ -8,7 +8,30 @@ Input rows are a dictionary with the keys of the JavaScript: `championHistory`, 
 and `results`. Every `ValueError` names the rule that failed and never carries a row's content.
 """
 
+import json
+import os
+import tempfile
+from pathlib import Path
+
 SCHEMA_VERSION = 1
+
+SNAPSHOT_COLUMNS = {  # the only keys a row of each part may have; anything else stops publish
+    "champion": {"model_version_id", "algorithm", "promoted_at"},
+    "baseline": {"model_version_id", "algorithm"},
+    "races": {"race_id", "year", "round", "event_name", "race_date"},
+    "metrics": {"model_version_id", "race_id", "metric_name", "value"},
+    "results": {
+        "year",
+        "round",
+        "driver",
+        "team",
+        "predicted_pace_delta_pct",
+        "actual_pace_delta_pct",
+        "is_valid_row",
+        "is_late",
+    },
+}
+TOP_LEVEL_KEYS = {"schema_version", "generated_at", *SNAPSHOT_COLUMNS}
 
 
 def find_champion(champion_history: list[dict], model_versions: list[dict]) -> dict:
@@ -53,3 +76,45 @@ def normalize(rows: dict) -> dict:
 def build_snapshot(rows: dict, generated_at: str) -> dict:
     """`schema_version` 1, the time of the run and the five parts."""
     return {"schema_version": SCHEMA_VERSION, "generated_at": generated_at, **normalize(rows)}
+
+
+def check_columns(snapshot: dict) -> list[str]:
+    """Problems found in the keys of a snapshot, one line per part and column; empty when it has only allowed columns.
+
+    A line names the part and the column, never a value: `results: unexpected column 'x'`, `metrics: missing column
+    'value'`. A part of rows is checked row by row, but each problem is reported once.
+    """
+    problems = [f"snapshot: unexpected key '{key}'" for key in sorted(snapshot.keys() - TOP_LEVEL_KEYS)]
+    problems += [f"snapshot: missing key '{key}'" for key in sorted(TOP_LEVEL_KEYS - snapshot.keys())]
+    for part, allowed in SNAPSHOT_COLUMNS.items():
+        if part not in snapshot:
+            continue
+        value = snapshot[part]
+        rows = [value] if isinstance(value, dict) else value
+        if not isinstance(rows, list) or not all(isinstance(row, dict) for row in rows):
+            problems.append(f"{part}: not a row or a list of rows")
+            continue
+        seen = set().union(*(row.keys() for row in rows)) if rows else set()
+        extra = seen - allowed
+        missing = {column for column in allowed if any(column not in row for row in rows)}
+        problems += [f"{part}: unexpected column '{column}'" for column in sorted(extra)]
+        problems += [f"{part}: missing column '{column}'" for column in sorted(missing)]
+    return problems
+
+
+def write_snapshot(path: Path, snapshot: dict) -> None:
+    """Write compact JSON with sorted keys through a temporary file, so a failure never leaves half a file.
+
+    The same snapshot always gives the same bytes. `NaN` and `Infinity` are refused (they are not valid JSON and the
+    page could not read them). On any failure the temporary file is removed and the previous file stays untouched.
+    """
+    text = json.dumps(snapshot, sort_keys=True, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
+    path = Path(path)
+    handle = tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=path.parent, prefix=f".{path.name}.", delete=False)
+    try:
+        with handle:
+            handle.write(text)
+        os.replace(handle.name, path)
+    except BaseException:
+        Path(handle.name).unlink(missing_ok=True)
+        raise
