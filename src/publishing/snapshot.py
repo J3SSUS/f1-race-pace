@@ -14,6 +14,7 @@ import tempfile
 from pathlib import Path
 
 SCHEMA_VERSION = 1
+PAGE_SIZE = 1000  # PostgREST returns at most 1,000 rows per request
 
 SNAPSHOT_COLUMNS = {  # the only keys a row of each part may have; anything else stops publish
     "champion": {"model_version_id", "algorithm", "promoted_at"},
@@ -118,3 +119,65 @@ def write_snapshot(path: Path, snapshot: dict) -> None:
     except BaseException:
         Path(handle.name).unlink(missing_ok=True)
         raise
+
+
+class SupabaseReadError(RuntimeError):
+    """A read failed. The message holds the table and the type of the error, never the error's own text, which could
+    carry a URL or a key."""
+
+
+def read_table(
+    client, table: str, columns: str, eq: dict | None = None, null: str | None = None, order=()
+) -> list[dict]:
+    """Every row of `table`, `PAGE_SIZE` at a time, until a short page comes back.
+
+    `eq` filters by equality, `null` keeps the rows where that column is NULL and `order` lists the sort columns.
+    """
+    rows: list[dict] = []
+    while True:
+        query = client.table(table).select(columns)
+        for column, value in (eq or {}).items():
+            query = query.eq(column, value)
+        if null:
+            query = query.is_(null, "null")
+        for column in order:
+            query = query.order(column)
+        try:
+            page = query.range(len(rows), len(rows) + PAGE_SIZE - 1).execute().data
+        except Exception as error:
+            raise SupabaseReadError(f"{table}: {type(error).__name__}") from None
+        rows.extend(page)
+        if len(page) < PAGE_SIZE:
+            return rows
+
+
+def read_rows(client) -> dict:
+    """The five public reads of the page, as the dictionary `normalize` takes (the keys of the JavaScript).
+
+    The champion is looked up first because `prediction_results` is read only for its `model_version_id`; with no
+    champion, two of them or a champion missing from `model_versions` this raises the `ValueError` of
+    `find_champion` before the big read.
+    """
+    champion_history = read_table(
+        client, "champion_history", "model_version_id,promoted_at,demoted_at", null="demoted_at"
+    )
+    model_versions = read_table(client, "model_versions", "model_version_id,algorithm,is_shadow")
+    champion = find_champion(champion_history, model_versions)
+    return {
+        "championHistory": champion_history,
+        "modelVersions": model_versions,
+        "races": read_table(client, "races", "race_id,year,round,event_name,race_date", order=("year", "round")),
+        "metrics": read_table(
+            client,
+            "metrics",
+            "model_version_id,race_id,metric_name,value",
+            eq={"split": "walk_forward", "segment_type": "overall"},
+        ),
+        "results": read_table(
+            client,
+            "prediction_results",
+            "year,round,driver,team,predicted_pace_delta_pct,actual_pace_delta_pct,is_valid_row,is_late",
+            eq={"model_version_id": champion["model_version_id"]},
+            order=("year", "round", "driver"),
+        ),
+    }
