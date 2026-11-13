@@ -10,33 +10,14 @@ import os
 import sys
 from pathlib import Path
 
-from dotenv import load_dotenv
-from postgrest.exceptions import APIError
-from supabase import create_client
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "src"))
 
-PUBLIC_TABLES = [
-    "circuits",
-    "drivers",
-    "teams",
-    "races",
-    "race_entries",
-    "features",
-    "model_versions",
-    "champion_history",
-    "predictions",
-    "ground_truth",
-    "metrics",
-    "shap_values",
-    "prediction_results",  # view
-]
-PRIVATE_TABLES = [
-    "feature_sets",
-    "feature_set_items",
-    "feature_values",
-    "prediction_runs",
-    "drift_reports",
-    "drift_feature_results",
-]
+from dotenv import load_dotenv  # noqa: E402
+from postgrest.exceptions import APIError  # noqa: E402
+from supabase import create_client  # noqa: E402
+
+from common.supabase_tables import PRIVATE_TABLES, PUBLIC_TABLES, can_select  # noqa: E402
 
 failures: list[str] = []
 
@@ -47,16 +28,8 @@ def report(ok: bool, label: str) -> None:
         failures.append(label)
 
 
-def can_select(client, table: str) -> bool:
-    try:
-        client.table(table).select("*").limit(1).execute()
-        return True
-    except APIError:
-        return False
-
-
 def main() -> int:
-    load_dotenv(Path(__file__).resolve().parents[1] / ".env")
+    load_dotenv(ROOT / ".env")
     values = {k: os.environ.get(k, "") for k in ("SUPABASE_URL", "SUPABASE_ANON_KEY", "SUPABASE_SERVICE_KEY")}
     missing = [k for k, v in values.items() if not v]
     if missing:
