@@ -122,3 +122,41 @@ def test_the_service_key_in_dot_env_is_not_returned(root, monkeypatch):
         f"SUPABASE_URL=https://env.supabase.co\nSUPABASE_ANON_KEY=from-file\nSUPABASE_SERVICE_KEY={FAKE_SERVICE_KEY}\n"
     )
     assert FAKE_SERVICE_KEY not in repr(read_inputs(root))
+
+
+RUN_IDS = {
+    "explain": "d5bb2da8b777423eb46c949c88b44739",
+    "evaluate": "100bba09a6604cf895095eb3143b4e30",
+    "sampling": "e64c04d8897c44d283da0422f2e818ce",
+}
+CARD_WITH_IDS = (
+    "# Model card: f1-race-pace, version 4 (ridge)\n\n"
+    f"2026-11-02 · explain run {RUN_IDS['explain']} · evaluate run {RUN_IDS['evaluate']}"
+    f" · sampling run {RUN_IDS['sampling']}\n\n"
+    "## 1. What it predicts\n\nThe pace.\n\n"
+    "## 2. Versions\n\n"
+    "- Model version: 4 (MLflow version 4), promoted 2026-11-01.\n"
+    f"- Sampling run: {RUN_IDS['sampling']}.\n"
+    f"- Explain run: {RUN_IDS['explain']}.\n"
+    f"- Evaluate run: {RUN_IDS['evaluate']}.\n"
+    "- Generated: 2026-11-02.\n"
+)
+
+
+def test_the_run_ids_are_removed_from_the_rendered_card_and_the_date_stays(root):
+    (root / "MODEL_CARD.md").write_text(CARD_WITH_IDS)
+    inputs = read_inputs(root, ENV)
+    html = inputs.card_summary_html + inputs.card_details_html
+    assert not any(run_id in html for run_id in RUN_IDS.values())
+    assert "<p>2026-11-02</p>" in inputs.card_summary_html
+    assert "explain run" not in html and "Sampling run" not in html
+    assert "Model version: 4" in inputs.card_details_html and "Generated: 2026-11-02" in inputs.card_details_html
+    assert (root / "MODEL_CARD.md").read_text() == CARD_WITH_IDS  # the file in the repository keeps them
+
+
+def test_a_card_with_changed_wording_keeps_its_id_so_the_control_can_stop_it(root):
+    changed = CARD_WITH_IDS.replace("evaluate run", "evaluation run").replace("- Explain run:", "- Run of explain:")
+    (root / "MODEL_CARD.md").write_text(changed)
+    inputs = read_inputs(root, ENV)
+    html = inputs.card_summary_html + inputs.card_details_html
+    assert RUN_IDS["evaluate"] in html and RUN_IDS["explain"] in html
