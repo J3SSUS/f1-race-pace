@@ -9,6 +9,7 @@ import base64
 import binascii
 import json
 import re
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -27,10 +28,33 @@ SNAPSHOT_NAME = "snapshot.json"
 RULES = ("file-type", "service-key", "service-key-name", "private-table", "mlflow-run-id", "snapshot-columns")
 
 
+class PublishedFilesError(RuntimeError):
+    """The list of published files could not be made. The message names the failure, never git's own output."""
+
+
 @dataclass(frozen=True)
 class Finding:
     path: str  # relative to the repository root, with forward slashes
     rule: str  # one of RULES
+
+
+def published_files(root: Path) -> list[Path]:
+    """The files under `site/` that git would publish: tracked files and new files that are not ignored.
+
+    Paths are relative to `root` and sorted. A tracked file already deleted from the disk is left out (the next
+    commit removes it, it publishes nothing). It fails closed: if `git` cannot run, or no file is left to check, it
+    raises, because an empty list would read as "nothing found".
+    """
+    command = ["git", "-C", str(root), "ls-files", "--cached", "--others", "--exclude-standard", "-z", "--", "site"]
+    try:
+        listing = subprocess.run(command, capture_output=True, check=True).stdout
+    except (OSError, subprocess.SubprocessError) as error:
+        raise PublishedFilesError(f"git ls-files failed: {type(error).__name__}") from None
+    names = {name for name in listing.decode("utf-8", "surrogateescape").split("\0") if name}
+    files = sorted(Path(name) for name in names if (root / name).is_file())
+    if not files:
+        raise PublishedFilesError("no file under site/ is listed as published")
+    return files
 
 
 def jwt_roles(text: str) -> list[str | None]:
