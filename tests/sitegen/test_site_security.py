@@ -24,18 +24,30 @@ def jwt(role):
 
 ANON_KEY = jwt("anon")
 SERVICE_KEY = jwt("service_role")
+# Supabase's newer keys are not JWTs: a publishable (anon) key and a secret (service) key with no role to decode.
+PUBLISHABLE_KEY = "sb_publishable_" + "x" * 30
+SECRET_KEY = "sb_secret_" + "y" * 30
+SECRET_KEY_FORMAT = re.compile(r"sb_secret_[\w-]+")
+KEYS = {"jwt": (ANON_KEY, SERVICE_KEY), "new": (PUBLISHABLE_KEY, SECRET_KEY)}  # (anon, service) in each format
 PAGES = ("index.html", "model.html", "site.css", "site.js")  # what a browser loads
 # The namespace of the SVG elements the script creates: an identifier, not a request.
 ALLOWED_URLS = {SUPABASE_URL, "http://www.w3.org/2000/svg"}
 
 
+@pytest.fixture(params=sorted(KEYS))
+def keys(request):
+    """The (anon, service) keys of the project, in each of the two formats Supabase issues."""
+    return KEYS[request.param]
+
+
 @pytest.fixture
-def built(root, tmp_path, monkeypatch):
+def built(root, tmp_path, monkeypatch, keys):
     """The site built from the real sources, with the service key in the environment and in `.env`."""
+    anon, service = keys
     monkeypatch.setenv("SUPABASE_URL", SUPABASE_URL)
-    monkeypatch.setenv("SUPABASE_ANON_KEY", ANON_KEY)
-    monkeypatch.setenv("SUPABASE_SERVICE_KEY", SERVICE_KEY)
-    (root / ".env").write_text(f"SUPABASE_SERVICE_KEY={SERVICE_KEY}\n")
+    monkeypatch.setenv("SUPABASE_ANON_KEY", anon)
+    monkeypatch.setenv("SUPABASE_SERVICE_KEY", service)
+    (root / ".env").write_text(f"SUPABASE_SERVICE_KEY={service}\n")
     out = tmp_path / "out"
     build_site(read_inputs(root), out)
     return out
@@ -53,23 +65,28 @@ def jwt_roles(text):
     return roles
 
 
-def test_the_service_key_is_in_no_file_of_the_built_site(built):
+def test_the_service_key_is_in_no_file_of_the_built_site(built, keys):
+    _, service = keys
+    needles = [service] + (["".join(service.split(".")[1:2])] if service.count(".") == 2 else [])  # a JWT's payload too
     assert files(built)
     for path in files(built):
-        assert SERVICE_KEY.encode() not in path.read_bytes(), path.name
-        assert SERVICE_KEY.split(".")[1].encode() not in path.read_bytes(), f"{path.name} has the key's payload"
+        for needle in needles:
+            assert needle.encode() not in path.read_bytes(), path.name
 
 
 def test_the_name_of_the_service_key_variable_is_in_no_file_of_the_built_site(built):
     for path in files(built):
         assert b"SUPABASE_SERVICE_KEY" not in path.read_bytes(), path.name
         assert b"service_role" not in path.read_bytes(), path.name
+        assert not SECRET_KEY_FORMAT.search(path.read_bytes().decode("utf-8", "ignore")), path.name
 
 
-def test_the_only_key_in_the_site_is_the_anon_key(built):
+def test_the_only_key_in_the_site_is_the_anon_key(built, keys):
+    anon, _ = keys
     found = {role for name in PAGES for role in jwt_roles((built / name).read_text())}
-    assert found == {"anon"}
-    assert ANON_KEY in (built / "site.js").read_text()
+    assert found <= {"anon"}  # empty for the newer format, which is not a JWT
+    assert anon in (built / "site.js").read_text()
+    assert not any(SECRET_KEY_FORMAT.search((built / name).read_text()) for name in PAGES)
 
 
 def test_no_page_references_a_url_other_than_supabase_or_the_svg_namespace(built):
@@ -119,11 +136,16 @@ def test_the_build_changes_none_of_its_inputs(root, tmp_path):
 
 
 def test_the_committed_site_holds_no_service_key():
-    """The real `site/` of the repository, if it has been built: every key in it is an anon key."""
+    """The real `site/` of the repository, if it has been built: the only key in it is an anon key."""
     site = ROOT / "site"
     if not (site / "site.js").is_file():
         pytest.skip("site/ has not been built")
     for name in PAGES:
-        assert "service_role" not in (site / name).read_text(), name
-        assert "SUPABASE_SERVICE_KEY" not in (site / name).read_text(), name
-        assert set(jwt_roles((site / name).read_text())) <= {"anon"}, name
+        text = (site / name).read_text()
+        assert "service_role" not in text, name
+        assert "SUPABASE_SERVICE_KEY" not in text, name
+        assert not SECRET_KEY_FORMAT.search(text), f"{name} has a key in the format of a Supabase secret key"
+        assert set(jwt_roles(text)) <= {"anon"}, name
+    js = (site / "site.js").read_text()
+    # The page needs a key to read Supabase: an anon JWT or a publishable key. Without this the check could pass empty.
+    assert "sb_publishable_" in js or "anon" in {role for role in jwt_roles(js)}

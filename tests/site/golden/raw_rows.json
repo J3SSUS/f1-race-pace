@@ -1,0 +1,53 @@
+{
+  "championHistory": [
+    { "model_version_id": 2, "promoted_at": "2026-10-20T18:00:00+00:00", "demoted_at": "2026-11-02T20:00:00+00:00" },
+    { "model_version_id": 4, "promoted_at": "2026-11-02T20:00:00+00:00", "demoted_at": null }
+  ],
+  "modelVersions": [
+    { "model_version_id": 1, "algorithm": "baseline", "is_shadow": false },
+    { "model_version_id": 2, "algorithm": "ridge", "is_shadow": false },
+    { "model_version_id": 3, "algorithm": "baseline", "is_shadow": false },
+    { "model_version_id": 4, "algorithm": "ridge", "is_shadow": false },
+    { "model_version_id": 5, "algorithm": "lightgbm", "is_shadow": true },
+    { "model_version_id": 6, "algorithm": "baseline", "is_shadow": false }
+  ],
+  "races": [
+    { "race_id": 87, "year": 2026, "round": 15, "event_name": "Alpha Grand Prix", "race_date": "2026-10-25" },
+    { "race_id": 88, "year": 2026, "round": 16, "event_name": "Beta Grand Prix", "race_date": "2026-11-01" },
+    { "race_id": 89, "year": 2026, "round": 17, "event_name": "Gamma Grand Prix", "race_date": "2026-11-08" },
+    { "race_id": 90, "year": 2026, "round": 18, "event_name": "Delta Grand Prix", "race_date": "2026-11-15" }
+  ],
+  "metrics": [
+    { "model_version_id": 4, "race_id": null, "metric_name": "mae", "value": 0.5509 },
+    { "model_version_id": 1, "race_id": null, "metric_name": "mae", "value": 0.9 },
+    { "model_version_id": 4, "race_id": null, "metric_name": "rmse", "value": 0.9189 },
+    { "model_version_id": 2, "race_id": null, "metric_name": "mae", "value": 0.6 },
+    { "model_version_id": 4, "race_id": 89, "metric_name": "mae", "value": 0.4012 },
+    { "model_version_id": 5, "race_id": null, "metric_name": "mae", "value": 0.52 },
+    { "model_version_id": 3, "race_id": null, "metric_name": "mae", "value": 0.732 },
+    { "model_version_id": 3, "race_id": null, "metric_name": "rmse", "value": 1.1076 },
+    { "model_version_id": 3, "race_id": 89, "metric_name": "mae", "value": 0.612 }
+  ],
+  "results": [
+    {
+      "year": 2026, "round": 17, "driver": "Max Verstappen", "team": "Red Bull Racing",
+      "predicted_pace_delta_pct": 0.12, "actual_pace_delta_pct": 0.15, "is_valid_row": true, "is_late": false
+    },
+    {
+      "year": 2026, "round": 17, "driver": "Lando Norris", "team": "McLaren",
+      "predicted_pace_delta_pct": -0.31, "actual_pace_delta_pct": -0.2, "is_valid_row": true, "is_late": false
+    },
+    {
+      "year": 2026, "round": 17, "driver": "Pierre Gasly", "team": "Alpine",
+      "predicted_pace_delta_pct": 0.85, "actual_pace_delta_pct": 3.4, "is_valid_row": false, "is_late": true
+    },
+    {
+      "year": 2026, "round": 18, "driver": "Lando Norris", "team": "McLaren",
+      "predicted_pace_delta_pct": -0.28, "actual_pace_delta_pct": null, "is_valid_row": null, "is_late": false
+    },
+    {
+      "year": 2026, "round": 18, "driver": "Max Verstappen", "team": "Red Bull Racing",
+      "predicted_pace_delta_pct": 0.1, "actual_pace_delta_pct": null, "is_valid_row": null, "is_late": true
+    }
+  ]
+}

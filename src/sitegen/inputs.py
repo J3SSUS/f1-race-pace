@@ -16,6 +16,14 @@ CONFIG_DIR = ROOT / "config"
 TEAM_COLORS_PATH = CONFIG_DIR / "team_colors.json"
 
 _HEX_COLOR = re.compile(r"#[0-9A-Fa-f]{6}")
+# The MLflow run ids of the card are not published (SPEC 17): the line under the title keeps only its date (group 1) and
+# the bullets of the last section are dropped. `MODEL_CARD.md` in the repository keeps them. If the card changes its
+# wording an id survives here, and the control of exposure stops `publish`: it fails safe.
+RUN_LINE = re.compile(
+    r"^(\d{4}-\d{2}-\d{2}) · explain run [0-9a-f]{32} · evaluate run [0-9a-f]{32} · sampling run [0-9a-f]{32}$",
+    re.M,
+)
+RUN_BULLET = re.compile(r"^- (?:Sampling|Explain|Evaluate) run: [0-9a-f]{32}\.\n", re.M)
 
 
 def load_team_colors(path: Path = TEAM_COLORS_PATH) -> dict[str, str]:
@@ -73,8 +81,9 @@ def _card_html(root: Path) -> tuple[str, str]:
     """The card as HTML in two parts: the opening plus the first `##` section, and the rest.
 
     Its charts are linked from the repository root (`site/charts/x.svg`); in the page they sit next to `model.html`,
-    so the links become `charts/x.svg`."""
+    so the links become `charts/x.svg`. The MLflow run ids are removed (`RUN_LINE` and `RUN_BULLET`)."""
     text = _read_text(root / "MODEL_CARD.md", root).replace("](site/charts/", "](charts/")
+    text = RUN_BULLET.sub("", RUN_LINE.sub(r"\1", text))
     sections = [m.start() for m in re.finditer(r"^## ", text, re.MULTILINE)]
     if len(sections) < 2:
         raise ValueError("MODEL_CARD.md: expected at least two '## ' sections (a summary and the rest)")
