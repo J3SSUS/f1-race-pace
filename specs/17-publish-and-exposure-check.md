@@ -1,6 +1,6 @@
 # SPEC 17 — Publish and exposure check
 
-> **Status:** Approved
+> **Status:** Implemented
 > **Depends on:** SPEC 11 (the charts and `explain.json`), SPEC 12 (the model card), SPEC 15 (the champion's predictions and metrics), SPEC 16 (the page, its data access and the `snapshot.json` contract)
 > **Backlog:** Phase 7 of `docs/backlog.md`: "`publish` script" and "Verify drift and other monitoring data are not exposed". The keep-alive GitHub Action moves to Phase 9
 > **Date:** 2026-11-10
