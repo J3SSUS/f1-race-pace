@@ -22,3 +22,6 @@ catboost_info
 .DS_Store
 
 .claude/settings.local.json
+
+# Carries MLflow run ids; read locally by the model_card step and the build, never published (SPEC 17)
+site/charts/explain.json
