@@ -13,4 +13,5 @@ configMapGenerator:
       - ground_truth.py
       - prediction.py
       - smoke_pod.py
+      - training.py
       - .airflowignore
