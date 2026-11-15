@@ -41,8 +41,11 @@ WORKDIR /app
 
 FROM base AS data
 
-COPY pyproject.toml uv.lock ./
-RUN uv sync --frozen --no-dev --no-default-groups
+# The two files are mounted for this one command, not copied: they are needed to install, not to run, and the layer
+# is still rebuilt only when one of them changes.
+RUN --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
+    --mount=type=bind,source=uv.lock,target=uv.lock \
+    uv sync --frozen --no-dev --no-default-groups
 
 COPY src ./src
 COPY scripts ./scripts
