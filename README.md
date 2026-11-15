@@ -26,7 +26,7 @@ The pipeline steps run from two images built from one Dockerfile (`docker/pipeli
 
 | Image | Steps | Size |
 | --- | --- | --- |
-| `f1-pipeline-data:0.1.0` | `ingest`, `load_reference`, `load_features`, `ground_truth` | 537 MB |
+| `f1-pipeline-data:0.1.0` | `ingest`, `load_reference`, `load_features`, `ground_truth`, `next_race` | 537 MB |
 | `f1-pipeline-ml:0.1.0` | `sample`, `train`, `evaluate`, `explain`, `model_card`, `predict`, `backtest` | 1.82 GB |
 
 `data` has only `[project].dependencies`; `ml` adds the group `ml` of `pyproject.toml` (scikit-learn, xgboost, lightgbm, catboost, optuna, mlflow, shap, ...). Both install from `uv.lock`, so they match the local environment.
@@ -134,10 +134,32 @@ kubectl port-forward -n f1 svc/mlflow 5001:5000                 # MLflow UI at h
 kubectl port-forward -n f1 svc/airflow-api-server 8080:8080     # Airflow UI at http://localhost:8080, user `admin`
 kubectl get secret postgres -n f1 -o jsonpath='{.data.AIRFLOW_ADMIN_PASSWORD}' | base64 --decode | pbcopy   # admin password to the clipboard
 
-kubectl apply -k k8s                # after changing a DAG in dags/: it shows in Airflow in a minute or two, no restart
+kubectl apply -k k8s                # after changing a DAG in dags/: a changed file is read in about a minute, a new file can take about five; no restart
+kubectl exec -n f1 airflow-scheduler-0 -c scheduler -- airflow dags list                # the DAGs Airflow has loaded
+kubectl exec -n f1 airflow-scheduler-0 -c scheduler -- airflow dags list-import-errors  # `No data found` when every DAG file imports
 ```
 
 The DAG `smoke_pod` (trigger it from the UI) launches one pod of each image and is the quick check that the cluster, the permissions and the images work.
+
+**Weekly routine** (the DAGs `prediction` and `ground_truth` have no schedule: trigger them by hand from the Airflow UI)
+
+| When | Do | Params |
+| --- | --- | --- |
+| After Saturday qualifying (`Q` published by OpenF1, about 30 minutes after it ends) | Trigger `prediction` | leave `year` and `round` empty: it resolves the next race |
+| After the race (about 30 minutes after it ends) | Trigger `ground_truth` | leave `year` and `round` empty: it resolves the last race held |
+| Then | `uv run python scripts/publish.py` by hand | |
+
+Both DAGs have two tasks: `resolve_race` (pod of the `data` image running `scripts/next_race.py`, which prints the race as JSON) and the step itself, which takes `year` and `round` from it. To run for another race, give **both** `year` and `round`; one alone fails in `resolve_race`. Both DAGs have no retries: a failed task with a `STOPPED:` line in its log means something has to change first. A live OpenF1 session blocks the schedule too (trigger again 30 minutes after it ends), and a race already predicted stops `prediction` on purpose (a prediction is never replaced).
+
+`next` is the first race of the year whose race session has not started, so after the lights go out on Sunday `prediction` points to the following round. To predict a race that already started, trigger it with its `year` and `round`; the prediction is stored as late (`is_late`).
+
+The same resolution by hand, as pods:
+
+```
+k8s/run-step.sh data scripts/next_race.py --which next    # the race `prediction` would run for
+k8s/run-step.sh data scripts/next_race.py --which last    # the race `ground_truth` would run for
+k8s/run-step.sh data scripts/next_race.py --which next --year 2026 --round 20   # checks that the race exists
+```
 
 **Rebuild from scratch**
 
