@@ -1,0 +1,31 @@
+# Lets the Airflow scheduler (where LocalExecutor runs the tasks) launch the step pods
+# of the KubernetesPodOperator in this namespace, and read their logs.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: airflow-pod-launcher
+  namespace: f1
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["create", "get", "list", "watch", "patch", "delete"]   # patch: the operator labels the pod when it ends
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["events"]       # read-only: the operator looks at them while the pod starts
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: airflow-pod-launcher
+  namespace: f1
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: airflow-pod-launcher
+subjects:
+  - kind: ServiceAccount
+    name: airflow-scheduler   # created by the chart (release `airflow`)
+    namespace: f1

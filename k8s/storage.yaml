@@ -32,3 +32,16 @@ spec:
   resources:
     requests:
       storage: 5Gi
+---
+# Logs of the Airflow tasks: LocalExecutor writes them in the scheduler pod and the api-server reads
+# them. The chart's own PVC asks for an access mode that kind's storage does not support.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: airflow-task-logs
+  namespace: f1
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 1Gi

@@ -7,6 +7,8 @@ resources:
   - postgres/statefulset.yaml
   - mlflow/deployment.yaml
   - mlflow/service.yaml
+  - airflow/rbac.yaml
+  - ../dags
 configMapGenerator:
   - name: postgres-init
     namespace: f1

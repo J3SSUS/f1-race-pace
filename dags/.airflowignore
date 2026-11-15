@@ -1,0 +1,4 @@
+# A ConfigMap volume is a tree of symlinks (..data -> ..<timestamp>/). Without this, the DAG walker
+# sees the timestamp directory twice and the dag-processor dies with "recursive loop".
+# Glob syntax (the default of Airflow 3): names that start with two dots. Do not switch to regexp.
+..*

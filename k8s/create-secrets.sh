@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# Creates the Secrets `supabase` and `postgres` in the namespace f1 from the host .env.
+# Creates the Secrets `supabase`, `postgres` and `airflow-metadata` in the namespace f1 from the host .env.
+# `airflow-metadata` (key `connection`) is the connection string of the Airflow database, built from the
+# AIRFLOW_DB_* values of the `postgres` Secret, so the Helm values hold no password.
 # An existing Secret is left untouched (so the random passwords are generated once).
 # Values never go to a file in the repo, to argv or to the terminal: they are written
 # to a private temp dir (mode 700) that is removed on exit. On a failure only the key
@@ -85,4 +87,18 @@ else
   put_random postgres AIRFLOW_DB_PASSWORD
   put_random postgres AIRFLOW_ADMIN_PASSWORD
   create_from_dir postgres
+fi
+
+if secret_exists airflow-metadata; then
+  echo "kept: secret/airflow-metadata already exists"
+else
+  secret_exists postgres || { echo "error: secret/postgres is needed to build airflow-metadata" >&2; exit 1; }
+  mkdir "$TMP/airflow-metadata"
+  pg_get() {
+    kubectl --context "$CTX" -n "$NS" get secret postgres -o "jsonpath={.data.$1}" | base64 --decode
+  }
+  printf 'postgresql+psycopg2://%s:%s@postgres:5432/%s' \
+    "$(pg_get AIRFLOW_DB_USER)" "$(pg_get AIRFLOW_DB_PASSWORD)" "$(pg_get AIRFLOW_DB_NAME)" \
+    > "$TMP/airflow-metadata/connection"
+  create_from_dir airflow-metadata
 fi
