@@ -1,10 +1,10 @@
 """The `data` image has no ML libraries, so the data scripts must never reach one.
 
 `f1-pipeline-data` installs only `[project].dependencies`; the group `ml` (scikit-learn, mlflow, ...) is left out. The
-four steps that image runs (`ingest`, `load_reference`, `load_features`, `ground_truth`) would break at run time in the
-cluster, not here, if a module they reach imported one of those packages. This test reads the code (it imports
-nothing) and follows every import of those scripts through `src/`, including the `__init__.py` Python runs on the way
-and imports inside functions, and fails naming the chain that reaches an `ml` package.
+five steps that image runs (`ingest`, `load_reference`, `load_features`, `ground_truth`, `next_race`) would break at
+run time in the cluster, not here, if a module they reach imported one of those packages. This test reads the code (it
+imports nothing) and follows every import of those scripts through `src/`, including the `__init__.py` Python runs on
+the way and imports inside functions, and fails naming the chain that reaches an `ml` package.
 """
 
 import ast
@@ -16,7 +16,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
-DATA_SCRIPTS = ("ingest", "load_reference", "load_features", "ground_truth")
+DATA_SCRIPTS = ("ingest", "load_reference", "load_features", "ground_truth", "next_race")
 
 # The import name when it differs from the distribution name in pyproject.toml.
 IMPORT_NAMES = {"scikit-learn": "sklearn"}
