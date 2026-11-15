@@ -1,0 +1,8 @@
+# One node: the cheapest in memory, and one PVC can be mounted by several pods.
+# The node image is pinned (default of kind v0.33.0), see DECISIONS.md.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: f1
+nodes:
+  - role: control-plane
+    image: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5

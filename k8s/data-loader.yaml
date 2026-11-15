@@ -1,0 +1,36 @@
+# Temporary pod for the one-time copy of the host data/ into the PVC:
+#   kubectl apply -f k8s/data-loader.yaml
+#   kubectl wait -n f1 --for=condition=Ready pod/data-loader
+#   kubectl cp data/. f1/data-loader:/app/data
+#   kubectl delete -f k8s/data-loader.yaml
+# Applied by hand; it is not part of the kustomization.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: data-loader
+  namespace: f1
+spec:
+  restartPolicy: Never
+  securityContext:
+    runAsUser: 1000
+    runAsGroup: 1000
+    runAsNonRoot: true
+    fsGroup: 1000
+  containers:
+    - name: loader
+      image: f1-pipeline-data:0.1.0
+      imagePullPolicy: IfNotPresent
+      command: ["sleep", "infinity"]
+      volumeMounts:
+        - name: data
+          mountPath: /app/data
+      resources:
+        requests:
+          memory: 256Mi
+          cpu: 100m
+        limits:
+          memory: 1Gi
+  volumes:
+    - name: data
+      persistentVolumeClaim:
+        claimName: pipeline-data

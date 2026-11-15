@@ -1,0 +1,12 @@
+# Base that turns the DAG files into the ConfigMap `airflow-dags`, mounted by the Helm values.
+# The name keeps no hash suffix so the chart's `volumes` can refer to it.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: f1
+generatorOptions:
+  disableNameSuffixHash: true
+configMapGenerator:
+  - name: airflow-dags
+    files:
+      - smoke_pod.py
+      - .airflowignore

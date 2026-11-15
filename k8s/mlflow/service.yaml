@@ -1,0 +1,13 @@
+# Same name and port as the compose service: http://mlflow:5000 keeps working.
+apiVersion: v1
+kind: Service
+metadata:
+  name: mlflow
+  namespace: f1
+spec:
+  selector:
+    app: mlflow
+  ports:
+    - name: http
+      port: 5000
+      targetPort: 5000

@@ -1,6 +1,8 @@
-# Local stack for phases 0-7. In phase 8 MLflow moves into kind.
-# The pipeline images (docker/pipeline) join this network with `docker run --network docker-kubernetes-ml_default` to
-# reach MLflow at http://mlflow:5000 (see "Pipeline images" in README.md); nothing here changes for them.
+# MLflow now runs in the kind cluster (SPEC 19, see "Kubernetes cluster" in README.md).
+# These services are kept STOPPED as a backup of the old data: the volumes `mlflow_db` and
+# `mlflow_artifacts` were migrated to the cluster and must not be deleted. Start only `mlflow-db`
+# (never `mlflow`, which would write to the old copy) when a migration or a dump needs it:
+#   docker compose up -d mlflow-db      and      docker compose stop mlflow-db
 services:
   mlflow-db:
     image: postgres:16

@@ -1,0 +1,68 @@
+# One PostgreSQL pod with two databases and roles: `mlflow` (created by the
+# POSTGRES_* variables) and `airflow` (created by init-airflow.sh on the first start).
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+  namespace: f1
+spec:
+  serviceName: postgres
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      securityContext:
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+      containers:
+        - name: postgres
+          image: postgres:16
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 5432
+          env:
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+            - name: POSTGRES_USER
+              valueFrom: {secretKeyRef: {name: postgres, key: MLFLOW_DB_USER}}
+            - name: POSTGRES_PASSWORD
+              valueFrom: {secretKeyRef: {name: postgres, key: MLFLOW_DB_PASSWORD}}
+            - name: POSTGRES_DB
+              valueFrom: {secretKeyRef: {name: postgres, key: MLFLOW_DB_NAME}}
+            - name: AIRFLOW_DB_USER
+              valueFrom: {secretKeyRef: {name: postgres, key: AIRFLOW_DB_USER}}
+            - name: AIRFLOW_DB_PASSWORD
+              valueFrom: {secretKeyRef: {name: postgres, key: AIRFLOW_DB_PASSWORD}}
+            - name: AIRFLOW_DB_NAME
+              valueFrom: {secretKeyRef: {name: postgres, key: AIRFLOW_DB_NAME}}
+          readinessProbe:
+            exec:
+              command: ["sh", "-c", "pg_isready -U \"$POSTGRES_USER\" -d \"$POSTGRES_DB\""]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          resources:
+            requests:
+              memory: 256Mi
+              cpu: 100m
+            limits:
+              memory: 512Mi
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+            - name: init
+              mountPath: /docker-entrypoint-initdb.d
+              readOnly: true
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: postgres-data
+        - name: init
+          configMap:
+            name: postgres-init
+            defaultMode: 0755

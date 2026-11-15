@@ -13,7 +13,7 @@ Closed decisions:
 - Data: seasons 2023 to 2027 from OpenF1 (free; it has no 2022 data), with raw data in local Parquet and everything calculated (features, target, predictions, metrics) in Supabase. Chronological 80/20 train/test split by race (no separate validation set; model selection uses temporal cross-validation inside train) and walk-forward retraining in 2026, with a shadow model without 2026 for comparison. With about 6 races of 2026 left on 2026-10-15, 2026 is a backtest and live predictions start with 2027 (the last 2026 races live only if the pipeline is ready in time).
 - Evidently, retraining trigger and GitHub Actions: after the core.
 - Zero cost: public repository and GitHub Pages for the page.
-- Out of scope: Kubeflow, MinIO, Prometheus/Grafana, Helm, cloud and betting.
+- Out of scope: Kubeflow, MinIO, Prometheus/Grafana, Helm (except the Airflow chart), cloud and betting.
 
 ## Frozen contracts
 
@@ -81,7 +81,7 @@ The core includes the static page and the champion explanation, because they are
 | --- | --- |
 | Core | Ingestion with Pandera; short EDA; preprocessing (features, target and valid-row rule); qualifying baseline and 6 models (Ridge, ElasticNet, Random Forest, XGBoost, LightGBM, CatBoost) with Optuna; evaluation (candidate selection, SHAP and model card); first champion promoted by hand; three DAGs (training, prediction and ground truth); `predictions` table; artifacts and static page. First as scripts in docker-compose, then on Kubernetes with Airflow |
 | After the core | Evidently (drift and MAE, internal only) with retraining trigger; walk-forward retraining of 2026; GitHub Actions for tests, image builds and page deployment; promotion by a local script (manual for the first champion, automatic after a retraining). Optional extra: FastAPI to practice Deployment, Service and Ingress |
-| Out of scope | Kubeflow, MinIO, Prometheus/Grafana, Helm, cloud deployment and betting (kept as an extension: teammate duels) |
+| Out of scope | Kubeflow, MinIO, Prometheus/Grafana, Helm (except the Airflow chart), cloud deployment and betting (kept as an extension: teammate duels) |
 
 Changes from what was discussed: SHAP enters the scope, only for the champion, because the page's explanation section needs it; and FastAPI leaves the core, because predictions are batch and the page is static.
 
