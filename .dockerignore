@@ -1,0 +1,23 @@
+# Build context of docker/pipeline/Dockerfile (SPEC 18). The Dockerfile copies only src/, scripts/, config/ and
+# docs/model_card.md.j2; this file keeps everything else out of the context, so no secret and no data can end up in
+# a layer. Patterns are relative to the repository root; `**/` also matches inside subfolders.
+
+# Secrets: the environment comes from `docker run --env-file` or a Kubernetes Secret, never from the image
+.env
+
+# Data: mounted at /app/data (a bind mount now, the shared PVC in kind)
+data/
+
+# Version control and local environments
+.git/
+.venv/
+
+# Not part of the pipeline
+site/
+tests/
+notebooks/
+
+# Generated files
+**/__pycache__
+**/catboost_info
+**/mlruns
