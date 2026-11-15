@@ -1,4 +1,5 @@
 import importlib.util
+import json
 from functools import partial
 from pathlib import Path
 
@@ -19,7 +20,7 @@ def cli():
     return module
 
 
-def run(cli, uri, tmp_path, raw_dir, ingest=None):  # noqa: F811
+def run(cli, uri, tmp_path, raw_dir, ingest=None, argv=None):  # noqa: F811
     sampler = partial(
         run_sampling,
         config(),
@@ -32,7 +33,7 @@ def run(cli, uri, tmp_path, raw_dir, ingest=None):  # noqa: F811
         today=TODAY,
     )
     lines: list[str] = []
-    code = cli.main([], sampler=sampler, out=lines.append)
+    code = cli.main(argv or [], sampler=sampler, out=lines.append)
     return code, lines
 
 
@@ -54,3 +55,22 @@ def test_exits_1_and_prints_the_races_when_the_step_stops(cli, uri, tmp_path, ra
     assert "2024 round 4 R: failed" in lines[-1]
     assert "2024 round 6 R: invalid" in lines[-1]
     assert not any(line.startswith("run_id") for line in lines)
+
+
+def test_output_writes_the_run_id_as_json_and_the_printed_lines_do_not_change(cli, uri, tmp_path, raw_dir):  # noqa: F811
+    _, plain = run(cli, uri, tmp_path / "a", raw_dir)
+    target = tmp_path / "xcom" / "return.json"
+    target.parent.mkdir()
+    code, lines = run(cli, uri, tmp_path / "b", raw_dir, argv=["--output", str(target)])
+    assert code == 0
+    run_id = lines[-1].removeprefix("run_id: ")
+    assert json.loads(target.read_text()) == {"run_id": run_id}
+    assert [line.split("digest")[0] for line in lines[:-1]] == [line.split("digest")[0] for line in plain[:-1]]
+    assert lines[-1].startswith("run_id: ") and len(lines) == len(plain)
+
+
+def test_output_is_not_written_when_the_step_stops(cli, uri, tmp_path, raw_dir):  # noqa: F811
+    target = tmp_path / "return.json"
+    code, _ = run(cli, uri, tmp_path, raw_dir, FakeIngest({(2024, 4, "R"): "failed"}), argv=["--output", str(target)])
+    assert code == 1
+    assert not target.exists()

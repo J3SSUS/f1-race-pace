@@ -89,7 +89,7 @@ Changes from what was discussed: SHAP enters the scope, only for the champion, b
 
 ![Project architecture: three DAGs running locally, Supabase and the page](../diagrams/architecture.svg)
 
-The whole pipeline runs locally and the three DAGs are triggered by hand: training whenever you want, prediction after qualifying and ground truth after the race. Raw data stays in local Parquet, and MLflow holds the runs, the registered datasets and the `champion` alias. The training DAG has four steps: sampling (ingestion and split), preprocess, training and evaluate. Everything calculated goes to Supabase: the features (all history, which training reads from there), the actual results, the predictions and the metrics. The page reads the public tables in the browser with no need to deploy; the internal ones (features, drift) are private through RLS.
+The whole pipeline runs locally and the three DAGs are triggered by hand: training whenever you want, prediction after qualifying and ground truth after the race. Raw data stays in local Parquet, and MLflow holds the runs, the registered datasets and the `champion` alias. The training DAG has three steps: sampling (ingestion and split), training (one pod per model) and evaluate; there is no preprocess step because the imputation lives inside each model's pipeline. Everything calculated goes to Supabase: the features (all history, which training reads from there), the actual results, the predictions and the metrics. The page reads the public tables in the browser with no need to deploy; the internal ones (features, drift) are private through RLS.
 
 ### Runtime topology
 
