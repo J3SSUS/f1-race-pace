@@ -1,6 +1,6 @@
 # SPEC 18 — Pipeline images
 
-> **Status:** Approved
+> **Status:** Implemented
 > **Depends on:** SPEC 01 (ingestion), SPEC 06 (sampling), SPEC 09 (training step), SPEC 10 (selection and the champion alias), SPEC 13 (ground truth script), SPEC 14 (prediction script)
 > **Backlog:** Phase 8 of `docs/backlog.md`: "Images" (Dockerfile(s) for the pipeline steps, separate from the official Airflow 3.x image). Loading them into kind with `kind load docker-image` belongs to SPEC 19
 > **Date:** 2026-11-15
@@ -17,7 +17,7 @@
 - **One multi-stage Dockerfile** at `docker/pipeline/Dockerfile`, on `python:3.12-slim` with uv copied from its official image at a pinned version:
   - stage `base`: the system packages the wheels need (if any, e.g. `libgomp1` for LightGBM), a non-root user (uid 1000), `WORKDIR /app`, the virtual env at `/app/.venv` first in `PATH`, `src/`, `scripts/` and `config/` copied in;
   - target `data`: `uv sync --frozen --no-dev --no-default-groups` (base dependencies only);
-  - target `ml`: `uv sync --frozen --no-dev --no-default-groups --group ml`, plus `docs/model_card.md.j2`.
+  - target `ml`: `uv sync --frozen --no-dev --no-default-groups --group ml`, plus `docs/model_card.md.j2` and `docs/model_card_notes.md` (the `model_card` step stops without the notes).
   - `ENTRYPOINT ["python"]`; the step is the command (`scripts/<step>.py <args>`).
 - **Which steps each image runs:**
   - `f1-pipeline-data`: `ingest.py`, `load_reference.py`, `load_features.py` (the `preprocess` step), `ground_truth.py`.
@@ -28,7 +28,7 @@
 - **Verification by the user**, documented as commands in the spec and in `README.md`:
   - `docker build --target data` and `--target ml`;
   - `data`: `docker run` of `ground_truth.py` for one race already ingested, on the compose network, with `data/` mounted and `--env-file .env`. It ends with exit 0 and the `ground_truth` rows of that race keep their values;
-  - `ml`: a smoke `docker run ... python -c "..."` that imports the four model libraries and loads `models:/f1-race-pace@champion` from `http://mlflow:5000` (today version 4). It writes nothing.
+  - `ml`: a smoke `docker run ... -c "..."` that imports the model libraries and loads the champion with `training.explain.load_champion` (the path `predict` takes: alias, version tags, `model_versions` row, then `runs:/<run>/model`) from `http://mlflow:5000` (today version 4). It reads MLflow and Supabase and writes nothing.
 - One line in `DECISIONS.md` for the dependency split and the two images. The backlog "Images" task is ticked with the user's agreement.
 
 **Out of scope (for future specs):**
@@ -52,7 +52,7 @@ No new table, column, view, Parquet or MLflow object: Supabase, the MLflow regis
 | Image | Dockerfile target | Python dependencies | Extra files | Steps it guarantees |
 |---|---|---|---|---|
 | `f1-pipeline-data:0.1.0` | `data` | `[project].dependencies` | none | `ingest`, `load_reference`, `load_features`, `ground_truth` |
-| `f1-pipeline-ml:0.1.0` | `ml` | `[project].dependencies` + group `ml` | `docs/model_card.md.j2` | `sample`, `train`, `evaluate`, `explain`, `model_card`, `predict`, `backtest` |
+| `f1-pipeline-ml:0.1.0` | `ml` | `[project].dependencies` + group `ml` | `docs/model_card.md.j2`, `docs/model_card_notes.md` | `sample`, `train`, `evaluate`, `explain`, `model_card`, `predict`, `backtest` |
 
 Both share the `base` stage: `python:3.12-slim`, user `app` (uid 1000), `WORKDIR /app`, `/app/src`, `/app/scripts`, `/app/config`, the virtual env at `/app/.venv` (first in `PATH`) and `ENTRYPOINT ["python"]`.
 
@@ -93,11 +93,11 @@ Each step leaves the repository working: tests green and `uv sync` on the host i
 3. **Guard the split with a test.** `tests/test_dependency_split.py` follows the imports of the four data scripts (`ingest`, `load_reference`, `load_features`, `ground_truth`) through `src/` and fails if any of them reaches a module of the `ml` group. This way a future import does not silently break the `data` image.
 4. **`.dockerignore`** with the list from the scope.
 5. **Dockerfile, `base` and `data` targets** at `docker/pipeline/Dockerfile`: `python:3.12-slim`, uv from `ghcr.io/astral-sh/uv:0.11.29`, dependencies installed in their own layer before the code is copied (the cache survives code changes), user `app` uid 1000, `ENTRYPOINT ["python"]`. The user builds it: `! docker build -f docker/pipeline/Dockerfile --target data -t f1-pipeline-data:0.1.0 .` and checks `docker run --rm f1-pipeline-data:0.1.0 scripts/ground_truth.py --help`.
-6. **`ml` target**: the `ml` group, the system libraries the model wheels need (e.g. `libgomp1`) and `docs/model_card.md.j2`. The user builds it with `--target ml -t f1-pipeline-ml:0.1.0` and checks `docker run --rm f1-pipeline-ml:0.1.0 scripts/train.py --help`.
+6. **`ml` target**: the `ml` group, the system libraries the model wheels need (e.g. `libgomp1`), `docs/model_card.md.j2` and `docs/model_card_notes.md`. The user builds it with `--target ml -t f1-pipeline-ml:0.1.0` and checks `docker run --rm f1-pipeline-ml:0.1.0 scripts/train.py --help`.
 7. **Docs.** A "Pipeline images" section in `README.md` with the build commands and the two `docker run` checks below; the comment at the top of `docker-compose.yml` mentions that the images join its network for the check.
 8. **Real run by the user**, with `docker compose up -d` running:
    - `data`: `docker run --rm --network docker-kubernetes-ml_default -v "$(pwd)/data:/app/data" --env-file .env f1-pipeline-data:0.1.0 scripts/ground_truth.py --year 2026 --round 20`. Exit 0, and the `ground_truth` rows of that race keep their values (checked with a query before and after).
-   - `ml`: `docker run --rm --network docker-kubernetes-ml_default --env-file .env -e MLFLOW_TRACKING_URI=http://mlflow:5000 f1-pipeline-ml:0.1.0 -c "import sklearn, xgboost, lightgbm, catboost, mlflow; m = mlflow.sklearn.load_model('models:/f1-race-pace@champion'); print(type(m).__name__)"`. It prints the class of the champion (version 4) and writes nothing.
+   - `ml`: `docker run --rm --network docker-kubernetes-ml_default --env-file .env -e MLFLOW_TRACKING_URI=http://mlflow:5000 f1-pipeline-ml:0.1.0 -c "import sys, xgboost, lightgbm, catboost; sys.path.insert(0, 'src'); from training.explain import load_champion; c = load_champion(); print(c.model_version_id, c.algorithm, type(c.model).__name__)"`. It prints `4 ridge Pipeline` (the champion, version 4) and writes nothing. `models:/f1-race-pace@champion` is not used: it fails with `No such artifact: 'MLmodel'` for version 4, also from the host, and the stored model pickles classes from `src/training/`, hence the `sys.path.insert`.
    - The image sizes are recorded (`docker images f1-pipeline-*`) in `DECISIONS.md`.
 9. **Close.** Status to `Implemented` once 8 passes; the backlog "Images" task is ticked with the user's agreement.
 
@@ -107,33 +107,33 @@ Each step leaves the repository working: tests green and `uv sync` on the host i
 
 **Dependencies**
 
-- [ ] `[project].dependencies` holds only requests, pandas, numpy, pyarrow, pandera, pydantic, pyyaml, supabase and python-dotenv; the other ten pins are in `[dependency-groups] ml` with the same versions.
-- [ ] `[tool.uv] default-groups = ["dev", "ml"]`; on the host `uv sync` installs the same packages and versions as before the change (`uv pip freeze` diff is empty).
-- [ ] `uv lock --check` passes and no package version changed in `uv.lock`.
-- [ ] `tests/test_dependency_split.py` passes, and it fails if a module reached from `ingest`, `load_reference`, `load_features` or `ground_truth` imports a package of the `ml` group (checked once by adding a temporary import).
-- [ ] `uv run pytest` and `uv run ruff check` pass.
+- [x] `[project].dependencies` holds only requests, pandas, numpy, pyarrow, pandera, pydantic, pyyaml, supabase and python-dotenv; the other ten pins are in `[dependency-groups] ml` with the same versions.
+- [x] `[tool.uv] default-groups = ["dev", "ml"]`; on the host `uv sync` installs the same packages and versions as before the change (`uv pip freeze` diff is empty).
+- [x] `uv lock --check` passes and no package version changed in `uv.lock`.
+- [x] `tests/test_dependency_split.py` passes, and it fails if a module reached from `ingest`, `load_reference`, `load_features` or `ground_truth` imports a package of the `ml` group (checked once by adding a temporary import).
+- [x] `uv run pytest` and `uv run ruff check src scripts tests` pass (the exploratory notebook has three import-order findings that were there before this spec and stay out of its scope).
 
 **Images**
 
-- [ ] `docker/pipeline/Dockerfile` has the stages `base`, `data` and `ml`; both targets build from a clean cache with `docker build --target ...`.
-- [ ] The base image is `python:3.12-slim` and uv comes from `ghcr.io/astral-sh/uv:0.11.29`; no `latest` tag anywhere in the Dockerfile.
-- [ ] Both images run as uid 1000 (`docker run --rm --entrypoint id <image> -u` prints `1000`).
-- [ ] `docker run --rm f1-pipeline-data:0.1.0 -c "import sklearn"` fails with `ModuleNotFoundError`; the same with `mlflow`.
-- [ ] `docker run --rm f1-pipeline-data:0.1.0 scripts/ground_truth.py --help` and `docker run --rm f1-pipeline-ml:0.1.0 scripts/train.py --help` exit 0.
-- [ ] Neither image contains `.env`, `data/`, `site/`, `tests/`, `notebooks/` or `.git/` (`docker run --rm --entrypoint ls <image> -a /app` shows only `.venv`, `config`, `scripts`, `src`, and `docs` in `ml`).
-- [ ] No secret in the image history: `docker history --no-trunc` of both images shows no `SUPABASE_` value and no `MLFLOW_` value.
+- [x] `docker/pipeline/Dockerfile` has the stages `base`, `data` and `ml`; both targets build from a clean cache with `docker build --target ...`.
+- [x] The base image is `python:3.12-slim` and uv comes from `ghcr.io/astral-sh/uv:0.11.29`; no `latest` tag anywhere in the Dockerfile.
+- [x] Both images run as uid 1000 (`docker run --rm --entrypoint id <image> -u` prints `1000`).
+- [x] `docker run --rm f1-pipeline-data:0.1.0 -c "import sklearn"` fails with `ModuleNotFoundError`; the same with `mlflow`.
+- [x] `docker run --rm f1-pipeline-data:0.1.0 scripts/ground_truth.py --help` and `docker run --rm f1-pipeline-ml:0.1.0 scripts/train.py --help` exit 0.
+- [x] Neither image contains `.env`, `data/`, `site/`, `tests/`, `notebooks/` or `.git/` (`docker run --rm --entrypoint ls <image> -a /app` shows only `.venv`, `config`, `data` (empty), `scripts`, `src`, and `docs` in `ml`).
+- [x] No secret in the image history: `docker history --no-trunc` of both images shows no `SUPABASE_` value and no `MLFLOW_` value.
 
 **Real run (user)**
 
-- [ ] With `docker compose up -d`, the `data` command of step 8 for 2026 round 20 ends with exit 0, and a query of `ground_truth` for that race gives the same `race_pace_delta_pct`, `clean_laps` and `is_valid_row` before and after.
-- [ ] The `ml` smoke of step 8 prints the class of the champion (version 4) loaded from `http://mlflow:5000`, with no 403 and no write to MLflow or Supabase.
-- [ ] The sizes of both images are recorded in `DECISIONS.md`.
+- [x] With `docker compose up -d`, the `data` command of step 8 for 2026 round 20 ends with exit 0, and a query of `ground_truth` for that race gives the same `actual_pace_delta_pct`, `clean_laps` and `is_valid_row` before and after (a digest of the three, ordered by `entry_id`); only `dag_run_id` changes.
+- [x] The `ml` smoke of step 8 prints `4 ridge Pipeline`, the champion (version 4) loaded with `load_champion` from `http://mlflow:5000`, with no 403 and no write to MLflow or Supabase.
+- [x] The sizes of both images are recorded in `DECISIONS.md`.
 
 **Docs**
 
-- [ ] `DECISIONS.md` has the line of step 1 before any code change.
-- [ ] `README.md` has the "Pipeline images" section with the build commands and both checks.
-- [ ] Status is `Implemented` and the backlog "Images" task is ticked (with the user's agreement).
+- [x] `DECISIONS.md` has the line of step 1 before any code change.
+- [x] `README.md` has the "Pipeline images" section with the build commands and both checks.
+- [x] Status is `Implemented` and the backlog "Images" task is ticked (with the user's agreement).
 
 ---
 
@@ -151,7 +151,7 @@ Each step leaves the repository working: tests green and `uv sync` on the host i
 - **Non-root user, uid 1000.** Good practice and tolerated by kind; Docker Desktop on macOS lets it write to the bind mount.
 - **Tag from the `pyproject.toml` version, never `latest`.** A `:latest` image makes Kubernetes try to pull it from a registry; a fixed tag is also traceable.
 - **Check against the compose MLflow, by service name.** `http://mlflow:5000` on the compose network is the closest thing to the Service of SPEC 19 and is already in `allowed-hosts`. `MLFLOW_TRACKING_URI` is overridden with `-e`, so one `.env` serves both host and container.
-- **The `ml` check loads the current champion (version 4) and writes nothing.** It proves the image can read any registered model. Version 4 stays champion; retrained models are born from the training DAG (SPEC 21 and Phase 9) and replace it only through `scripts/promote.py` and the 0.98 × MAE rule.
+- **The `ml` check loads the current champion (version 4) with `load_champion` and writes nothing.** It proves the image can read any registered model through the same path `predict` takes. Version 4 stays champion; retrained models are born from the training DAG (SPEC 21 and Phase 9) and replace it only through `scripts/promote.py` and the 0.98 × MAE rule.
 - **Phase 8 split into SPEC 18 (images), 19 (kind cluster with MLflow, PVC, Secret and Airflow), 20 (ground truth and prediction DAGs) and 21 (training DAG).**
 
 **Discarded**
