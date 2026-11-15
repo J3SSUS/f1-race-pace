@@ -87,3 +87,50 @@ def held_events(schedule: pd.DataFrame, today: datetime | None = None) -> pd.Dat
     now = now.tz_localize("UTC") if now.tzinfo is None else now.tz_convert("UTC")
     last_end = schedule.groupby(["year", "round"])["session_end_utc"].transform("max")
     return schedule[last_end < now].reset_index(drop=True)
+
+
+def _given(value: int | str | None) -> int | None:
+    """None and the empty string (a null DAG param rendered as text) both mean "not given"."""
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return None
+    return int(value)
+
+
+def resolve_race(
+    schedule: pd.DataFrame,
+    which: str,
+    year: int | str | None = None,
+    round: int | str | None = None,
+    now: datetime | None = None,
+) -> dict[str, int]:
+    """The race a DAG runs for, as `{"year": Y, "round": R}`.
+
+    With `year` and `round` both given, that race, after checking it is in the schedule. With neither,
+    `which="next"` is the first round of the current year (UTC) whose `R` session has not started, and
+    `which="last"` is the latest round whose last session ended. Raises ValueError with the reason when
+    there is no such race, or when only one of `year` and `round` is given.
+    """
+    year, round = _given(year), _given(round)
+    if (year is None) != (round is None):
+        raise ValueError("year and round must be given together or not at all")
+    if year is not None:
+        if not ((schedule["year"] == year) & (schedule["round"] == round)).any():
+            raise ValueError(f"Round {round} of {year} is not in the OpenF1 schedule")
+        return {"year": year, "round": round}
+
+    stamp = pd.Timestamp(now or datetime.now(UTC))
+    stamp = stamp.tz_localize("UTC") if stamp.tzinfo is None else stamp.tz_convert("UTC")
+    if which == "next":
+        races = schedule[(schedule["year"] == stamp.year) & (schedule["session"] == "R")]
+        upcoming = races[races["session_date_utc"] > stamp]
+        if upcoming.empty:
+            raise ValueError(f"No race left in {stamp.year}: every race has started")
+        row = upcoming.sort_values("round").iloc[0]
+    elif which == "last":
+        held = held_events(schedule, stamp)
+        if held.empty:
+            raise ValueError("No race has been held yet")
+        row = held.sort_values(["year", "round"]).iloc[-1]
+    else:
+        raise ValueError(f"which must be 'next' or 'last', not {which!r}")
+    return {"year": int(row["year"]), "round": int(row["round"])}

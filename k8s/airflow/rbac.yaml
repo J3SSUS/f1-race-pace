@@ -13,6 +13,9 @@ rules:
     resources: ["pods/log"]
     verbs: ["get"]
   - apiGroups: [""]
+    resources: ["pods/exec"]    # the operator reads the XCom file of a pod (SPEC 20)
+    verbs: ["get", "create"]    # get: the websocket handshake of exec is a GET
+  - apiGroups: [""]
     resources: ["events"]       # read-only: the operator looks at them while the pod starts
     verbs: ["get", "list", "watch"]
 ---

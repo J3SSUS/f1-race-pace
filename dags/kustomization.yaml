@@ -8,5 +8,8 @@ generatorOptions:
 configMapGenerator:
   - name: airflow-dags
     files:
+      - f1_pods.py
+      - ground_truth.py
+      - prediction.py
       - smoke_pod.py
       - .airflowignore
