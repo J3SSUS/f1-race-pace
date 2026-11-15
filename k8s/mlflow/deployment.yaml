@@ -30,7 +30,7 @@ spec:
           args:
             - --host=0.0.0.0
             - --port=5000
-            - --workers=1   # default workers were OOMKilled under 1Gi, see DECISIONS.md
+            - --workers=1   # default workers peak at 87% of 1Gi, see DECISIONS.md
             - --backend-store-uri=postgresql://$(MLFLOW_DB_USER):$(MLFLOW_DB_PASSWORD)@postgres:5432/$(MLFLOW_DB_NAME)
             - --artifacts-destination=/mlflow/artifacts
             - --serve-artifacts
@@ -38,6 +38,9 @@ spec:
           env:
             - name: HOME
               value: /tmp
+            # No background jobs: they start 8 extra processes of ~240 MB each (see DECISIONS.md).
+            - name: MLFLOW_SERVER_ENABLE_JOB_EXECUTION
+              value: "false"
             - name: MLFLOW_DB_USER
               valueFrom: {secretKeyRef: {name: postgres, key: MLFLOW_DB_USER}}
             - name: MLFLOW_DB_PASSWORD
