@@ -1,6 +1,6 @@
 # SPEC 19 — kind cluster with MLflow and Airflow
 
-> **Status:** Approved
+> **Status:** Implemented
 > **Depends on:** SPEC 18 (the two pipeline images), the MLflow stack of Phase 0 (`docker-compose.yml`, the source of the migration), SPEC 10 (the `champion` alias that must survive the move)
 > **Backlog:** Phase 8 of `docs/backlog.md`: "Cluster" (kind with one shared PVC, MLflow moved into the cluster, the Supabase service key as a Kubernetes Secret, Airflow with `KubernetesPodOperator`) and the `kind load docker-image` part of "Images", left out of SPEC 18. The three DAGs (SPEC 20 and 21) and the native Jobs fallback are not covered
 > **Date:** 2026-11-15
