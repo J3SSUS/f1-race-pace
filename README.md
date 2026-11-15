@@ -54,10 +54,12 @@ Checks, with the stack running:
 docker run --rm --network docker-kubernetes-ml_default -v "$(pwd)/data:/app/data" --env-file .env \
   f1-pipeline-data:0.1.0 scripts/ground_truth.py --year 2026 --round 20
 
-# ml: load the current champion from MLflow (writes nothing)
+# ml: load the current champion the way `predict` does (reads MLflow and Supabase, writes nothing); prints e.g. `4 ridge Pipeline`
 docker run --rm --network docker-kubernetes-ml_default --env-file .env -e MLFLOW_TRACKING_URI=http://mlflow:5000 \
-  f1-pipeline-ml:0.1.0 -c "import sklearn, xgboost, lightgbm, catboost, mlflow; m = mlflow.sklearn.load_model('models:/f1-race-pace@champion'); print(type(m).__name__)"
+  f1-pipeline-ml:0.1.0 -c "import sys, xgboost, lightgbm, catboost; sys.path.insert(0, 'src'); from training.explain import load_champion; c = load_champion(); print(c.model_version_id, c.algorithm, type(c.model).__name__)"
 ```
+
+The champion is loaded with `load_champion` (`runs:/<run>/model`), not with `models:/f1-race-pace@champion`: that URI does not resolve for this registry, not even from the host. `sys.path.insert` is needed because the stored model pickles classes from `src/training/`; the scripts do the same.
 
 Steps that write outside `/app/data` (`explain` writes `site/charts/`, `model_card` writes `MODEL_CARD.md`) lose those files when the container ends; they keep running locally until the training DAG decides where they go.
 
