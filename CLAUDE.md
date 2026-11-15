@@ -30,5 +30,5 @@ Status: phase 0 (setup) in progress. Read `docs/backlog.md` before starting any 
 - Python 3.12, uv, ruff, pytest. Pin versions in `pyproject.toml`.
 - Every row and artifact carries `run_id`, model version and generation date.
 - Target tests use synthetic raw tables built in `tests/features` (no OpenF1 data in the repo) with values derived by hand.
-- After the core (phase 9): Evidently, retraining trigger and GitHub Actions (tests, image builds, page deploy). Out of scope: Kubeflow, MinIO, Prometheus/Grafana, Helm, cloud, betting.
+- After the core (phase 9): Evidently, retraining trigger and GitHub Actions (tests, image builds, page deploy). Out of scope: Kubeflow, MinIO, Prometheus/Grafana, Helm (except the Airflow chart), cloud, betting.
 - Commit only when the user asks.
