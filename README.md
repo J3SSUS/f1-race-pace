@@ -14,8 +14,9 @@ Phase 0 (setup) in progress. The scope and data model are written (the backlog i
 uv sync                         # Python 3.12 environment from uv.lock
 uv run pytest                   # tests
 cp .env.example .env            # then fill in the values
-docker compose up -d --build    # MLflow at http://localhost:5001
 ```
+
+MLflow and Airflow run in a kind cluster, see "Kubernetes cluster" below (`docker-compose.yml` is kept only as a stopped backup of the old MLflow data).
 
 Supabase: create a project, open the SQL editor, run `supabase/migrations/0001_schema.sql`, and copy the URL, anon key and service key into `.env`. The service key never goes in the repository.
 
@@ -36,6 +37,8 @@ docker build -f docker/pipeline/Dockerfile --target ml -t f1-pipeline-ml:0.1.0 .
 ```
 
 Always pass `--target`: without it Docker builds the last stage, and a later stage added to the Dockerfile would end up under the wrong tag.
+
+> The `docker run` checks of this section were written for the compose MLflow. MLflow now lives in the cluster, so a step that needs it runs as a pod with `k8s/run-step.sh` (see below); the two `docker run` examples only apply if you start the old compose stack again.
 
 What a container needs is the same one a pod will need in kind:
 
@@ -63,6 +66,88 @@ The champion is loaded with `load_champion` (`runs:/<run>/model`), not with `mod
 
 Steps that write outside `/app/data` (`explain` writes `site/charts/`, `model_card` writes `MODEL_CARD.md`) lose those files when the container ends; they keep running locally until the training DAG decides where they go.
 
+## Kubernetes cluster
+
+A single-node kind cluster `f1` (namespace `f1`) runs PostgreSQL, MLflow and Airflow 3.x. The pipeline steps run as pods that mount the Parquets from a shared volume. Everything is plain manifests applied with `kubectl apply -k k8s`, except Airflow, which is the official Helm chart (pinned, `k8s/airflow/values.yaml`).
+
+Needs Docker Desktop with at least 10 GB of memory (`docker info --format '{{.MemTotal}}'`), plus `kind`, `kubectl` and `helm`. All the commands run from the repository root. Versions are pinned in `k8s/kind-config.yaml` (node image) and `k8s/airflow/values.yaml` (chart 1.22.0, Airflow 3.2.2).
+
+**1. Create the cluster and the namespace**
+
+```
+kind create cluster --name f1 --config k8s/kind-config.yaml
+kubectl apply -k k8s            # namespace, volumes, PostgreSQL, MLflow, pod permissions, DAGs
+```
+
+PostgreSQL and MLflow stay waiting until the Secrets of step 4 exist; they start by themselves afterwards.
+
+**2. Build the images and load them into the node.** The node has its own image store, so every image is loaded with `kind load`. The pods use fixed tags and `imagePullPolicy: IfNotPresent`: after rebuilding an image **load it again**, or the pods keep running the old one with no warning.
+
+```
+docker build -f docker/pipeline/Dockerfile --target data -t f1-pipeline-data:0.1.0 .
+docker build -f docker/pipeline/Dockerfile --target ml -t f1-pipeline-ml:0.1.0 .
+docker build -t f1-mlflow:3.17.1 docker/mlflow
+kind load docker-image f1-pipeline-data:0.1.0 --name f1
+kind load docker-image f1-pipeline-ml:0.1.0 --name f1
+kind load docker-image f1-mlflow:3.17.1 --name f1
+```
+
+**3. Copy the Parquets once** (the cluster owns them afterwards; the host `data/` stays as the source to copy again):
+
+```
+kubectl apply -f k8s/data-loader.yaml
+kubectl wait -n f1 --for=condition=Ready pod/data-loader
+kubectl cp data/. f1/data-loader:/app/data
+kubectl delete -f k8s/data-loader.yaml
+```
+
+**4. Create the Secrets** from the host `.env` (it reads `.env`, never writes a value to a file; an existing Secret is left untouched, so the random Airflow passwords are generated once):
+
+```
+k8s/create-secrets.sh
+```
+
+It creates `supabase` (URL and service key), `postgres` (the MLflow database variables plus the Airflow database and admin passwords) and `airflow-metadata` (the connection string of the Airflow database). The anon key never enters the cluster.
+
+**5. Migrate MLflow from docker-compose** (once; it copies the database and the artifacts, so the `champion` alias and the run ids that Supabase points to keep existing; the compose volumes are only read and stay as a backup):
+
+```
+docker compose up -d mlflow-db      # only the database; the compose MLflow server must stay stopped
+k8s/migrate-from-compose.sh         # refuses to run over a cluster database that already has runs, unless --force
+docker compose stop mlflow-db
+```
+
+**6. Install Airflow** (the node downloads the `apache/airflow` image, over 1 GB):
+
+```
+helm install airflow apache-airflow/airflow --version 1.22.0 -n f1 -f k8s/airflow/values.yaml --timeout 10m
+```
+
+**Daily use**
+
+```
+# a pipeline step as a pod: logs streamed, pod deleted, exit code of the container
+k8s/run-step.sh data scripts/ground_truth.py --year 2026 --round 20
+k8s/run-step.sh ml scripts/promote.py --help
+
+kubectl port-forward -n f1 svc/mlflow 5001:5000                 # MLflow UI at http://localhost:5001
+kubectl port-forward -n f1 svc/airflow-api-server 8080:8080     # Airflow UI at http://localhost:8080, user `admin`
+kubectl get secret postgres -n f1 -o jsonpath='{.data.AIRFLOW_ADMIN_PASSWORD}' | base64 --decode | pbcopy   # admin password to the clipboard
+
+kubectl apply -k k8s                # after changing a DAG in dags/: it shows in Airflow in a minute or two, no restart
+```
+
+The DAG `smoke_pod` (trigger it from the UI) launches one pod of each image and is the quick check that the cluster, the permissions and the images work.
+
+**Rebuild from scratch**
+
+```
+helm uninstall airflow -n f1
+kind delete cluster --name f1
+```
+
+`kind delete cluster` **loses the volumes**: the Parquets, the MLflow runs created after the migration and the Airflow history. The host `data/` and the compose volumes `docker-kubernetes-ml_mlflow_db` and `docker-kubernetes-ml_mlflow_artifacts` are the only copies that survive, so do not delete them. The Docker Desktop disk is shared with the node: the `ml` image exists twice (Docker and the node), and a full disk shows up as pods that never start or as databases that crash with `No space left on device`.
+
 ## Where to look
 
 | File | What it holds |
@@ -81,5 +166,6 @@ src/        code root: features, ingestion, training, common
 dags/ tests/ site/ scripts/
 config/     training.json
 supabase/   migrations/0001_schema.sql
-docker/     MLflow image and the pipeline images (docker/pipeline); docker-compose.yml at the root
+docker/     MLflow image and the pipeline images (docker/pipeline); docker-compose.yml at the root (stopped backup)
+k8s/        kind cluster, PostgreSQL, MLflow, Airflow values and the scripts that drive them
 ```
