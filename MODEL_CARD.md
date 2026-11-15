@@ -1,6 +1,6 @@
 # Model card: f1-race-pace, version 4 (ridge)
 
-2026-11-02 · explain run d5bb2da8b777423eb46c949c88b44739 · evaluate run 100bba09a6604cf895095eb3143b4e30 · sampling run e64c04d8897c44d283da0422f2e818ce
+2026-11-15 · explain run 50d1e403943548b6a7516cd706ac662d · evaluate run 100bba09a6604cf895095eb3143b4e30 · sampling run e64c04d8897c44d283da0422f2e818ce
 
 ## 1. What it predicts
 
@@ -199,6 +199,6 @@ The candidate was picked on the out-of-fold errors of train, never on test: the 
 
 - Model version: 4 (MLflow version 4), promoted 2026-11-01.
 - Sampling run: e64c04d8897c44d283da0422f2e818ce.
-- Explain run: d5bb2da8b777423eb46c949c88b44739.
+- Explain run: 50d1e403943548b6a7516cd706ac662d.
 - Evaluate run: 100bba09a6604cf895095eb3143b4e30.
-- Generated: 2026-11-02.
+- Generated: 2026-11-15.
