@@ -3,3 +3,10 @@ kind: Kustomization
 resources:
   - namespace.yaml
   - storage.yaml
+  - postgres/service.yaml
+  - postgres/statefulset.yaml
+configMapGenerator:
+  - name: postgres-init
+    namespace: f1
+    files:
+      - postgres/init-airflow.sh
