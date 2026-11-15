@@ -586,7 +586,8 @@ function renderByRace(container, model) {
   container.append(list);
 }
 
-/* The baseline and the per-race bars fill in at once; the champion figures count when the section enters the view. */
+/* The baseline and the per-race bars fill in at once; the champion figures count when their row of cards enters the view.
+   Only the row is observed: the whole section is too tall for a 30% threshold on a short viewport. */
 function renderResults(data) {
   const section = document.getElementById("results");
   if (!section) return;
@@ -611,7 +612,7 @@ function renderResults(data) {
       start();
     }
   }, { threshold: 0.3 });
-  observer.observe(section);
+  observer.observe(document.getElementById("results-figures") || section);
 }
 
 /* ---- Features (DOM, checked by hand) ---- */
