@@ -1,0 +1,78 @@
+# Same server flags as docker-compose.yml, plus the in-cluster names in --allowed-hosts.
+# The database credentials come from the Secret `postgres`; $(VAR) is expanded by Kubernetes.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mlflow
+  namespace: f1
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate   # the artifact PVC is ReadWriteOnce: never two pods at once
+  selector:
+    matchLabels:
+      app: mlflow
+  template:
+    metadata:
+      labels:
+        app: mlflow
+    spec:
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        runAsNonRoot: true
+        fsGroup: 1000
+      containers:
+        - name: mlflow
+          image: f1-mlflow:3.17.1
+          imagePullPolicy: IfNotPresent
+          command: ["mlflow", "server"]
+          args:
+            - --host=0.0.0.0
+            - --port=5000
+            - --workers=1   # default workers were OOMKilled under 1Gi, see DECISIONS.md
+            - --backend-store-uri=postgresql://$(MLFLOW_DB_USER):$(MLFLOW_DB_PASSWORD)@postgres:5432/$(MLFLOW_DB_NAME)
+            - --artifacts-destination=/mlflow/artifacts
+            - --serve-artifacts
+            - --allowed-hosts=localhost:*,127.0.0.1:*,mlflow:*,mlflow.f1.svc.cluster.local:*
+          env:
+            - name: HOME
+              value: /tmp
+            - name: MLFLOW_DB_USER
+              valueFrom: {secretKeyRef: {name: postgres, key: MLFLOW_DB_USER}}
+            - name: MLFLOW_DB_PASSWORD
+              valueFrom: {secretKeyRef: {name: postgres, key: MLFLOW_DB_PASSWORD}}
+            - name: MLFLOW_DB_NAME
+              valueFrom: {secretKeyRef: {name: postgres, key: MLFLOW_DB_NAME}}
+          ports:
+            - containerPort: 5000
+          # The kubelet calls the pod IP, which --allowed-hosts would reject: send an allowed Host.
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 5000
+              httpHeaders:
+                - {name: Host, value: "localhost:5000"}
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 5000
+              httpHeaders:
+                - {name: Host, value: "localhost:5000"}
+            initialDelaySeconds: 60
+            periodSeconds: 20
+          resources:
+            requests:
+              memory: 512Mi
+              cpu: 100m
+            limits:
+              memory: 1Gi
+          volumeMounts:
+            - name: artifacts
+              mountPath: /mlflow/artifacts
+      volumes:
+        - name: artifacts
+          persistentVolumeClaim:
+            claimName: mlflow-artifacts

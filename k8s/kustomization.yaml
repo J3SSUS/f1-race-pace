@@ -5,6 +5,8 @@ resources:
   - storage.yaml
   - postgres/service.yaml
   - postgres/statefulset.yaml
+  - mlflow/deployment.yaml
+  - mlflow/service.yaml
 configMapGenerator:
   - name: postgres-init
     namespace: f1
