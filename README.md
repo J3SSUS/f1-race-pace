@@ -19,6 +19,48 @@ docker compose up -d --build    # MLflow at http://localhost:5001
 
 Supabase: create a project, open the SQL editor, run `supabase/migrations/0001_schema.sql`, and copy the URL, anon key and service key into `.env`. The service key never goes in the repository.
 
+## Pipeline images
+
+The pipeline steps run from two images built from one Dockerfile (`docker/pipeline/Dockerfile`). The step is the command and the entrypoint is `python`, so the same image runs any of its steps. Both run as a non-root user (uid 1000), and neither holds `.env`, data or secrets.
+
+| Image | Steps | Size |
+| --- | --- | --- |
+| `f1-pipeline-data:0.1.0` | `ingest`, `load_reference`, `load_features`, `ground_truth` | 537 MB |
+| `f1-pipeline-ml:0.1.0` | `sample`, `train`, `evaluate`, `explain`, `model_card`, `predict`, `backtest` | 1.82 GB |
+
+`data` has only `[project].dependencies`; `ml` adds the group `ml` of `pyproject.toml` (scikit-learn, xgboost, lightgbm, catboost, optuna, mlflow, shap, ...). Both install from `uv.lock`, so they match the local environment.
+
+```
+docker build -f docker/pipeline/Dockerfile --target data -t f1-pipeline-data:0.1.0 .
+docker build -f docker/pipeline/Dockerfile --target ml -t f1-pipeline-ml:0.1.0 .
+```
+
+Always pass `--target`: without it Docker builds the last stage, and a later stage added to the Dockerfile would end up under the wrong tag.
+
+What a container needs is the same one a pod will need in kind:
+
+| What | Where | `docker run` |
+| --- | --- | --- |
+| Raw and split Parquets | `/app/data` | `-v "$(pwd)/data:/app/data"` |
+| `SUPABASE_URL`, `SUPABASE_SERVICE_KEY` | environment | `--env-file .env` |
+| `MLFLOW_TRACKING_URI` (`ml` only) | environment | `-e MLFLOW_TRACKING_URI=http://mlflow:5000` |
+
+The `.env` has `MLFLOW_TRACKING_URI=http://localhost:5001`, which only works from the host; inside a container `-e` overrides it with the service name, reached through the compose network (`docker-kubernetes-ml_default`, named after this folder; `docker network ls` shows it). Start the stack first with `docker compose up -d`.
+
+Checks, with the stack running:
+
+```
+# data: rewrite the ground truth of one race already on disk (same values; only dag_run_id changes)
+docker run --rm --network docker-kubernetes-ml_default -v "$(pwd)/data:/app/data" --env-file .env \
+  f1-pipeline-data:0.1.0 scripts/ground_truth.py --year 2026 --round 20
+
+# ml: load the current champion from MLflow (writes nothing)
+docker run --rm --network docker-kubernetes-ml_default --env-file .env -e MLFLOW_TRACKING_URI=http://mlflow:5000 \
+  f1-pipeline-ml:0.1.0 -c "import sklearn, xgboost, lightgbm, catboost, mlflow; m = mlflow.sklearn.load_model('models:/f1-race-pace@champion'); print(type(m).__name__)"
+```
+
+Steps that write outside `/app/data` (`explain` writes `site/charts/`, `model_card` writes `MODEL_CARD.md`) lose those files when the container ends; they keep running locally until the training DAG decides where they go.
+
 ## Where to look
 
 | File | What it holds |
@@ -37,5 +79,5 @@ src/        code root: features, ingestion, training, common
 dags/ tests/ site/ scripts/
 config/     training.json
 supabase/   migrations/0001_schema.sql
-docker/     MLflow image (docker-compose.yml at the root)
+docker/     MLflow image and the pipeline images (docker/pipeline); docker-compose.yml at the root
 ```

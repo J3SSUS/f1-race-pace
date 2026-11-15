@@ -1,9 +1,10 @@
 # Pipeline images (SPEC 18): one Dockerfile, one target per image.
 #
 #   docker build -f docker/pipeline/Dockerfile --target data -t f1-pipeline-data:0.1.0 .
+#   docker build -f docker/pipeline/Dockerfile --target ml -t f1-pipeline-ml:0.1.0 .
 #
 # `data` runs the steps that never touch a model: ingest, load_reference, load_features and ground_truth.
-# The target `ml` (every step that touches a model or MLflow) is added in the next step of the spec.
+# `ml` runs every step that touches a model or MLflow: sample, train, evaluate, explain, model_card, predict, backtest.
 #
 # The step is the command and ENTRYPOINT is `python`, so a pod only sets `arguments`:
 #
@@ -50,6 +51,31 @@ RUN --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
 COPY src ./src
 COPY scripts ./scripts
 COPY config ./config
+
+USER app
+
+ENTRYPOINT ["python"]
+
+
+FROM base AS ml
+
+# LightGBM and XGBoost load the OpenMP runtime, which python:3.12-slim does not ship: the build passes and the import
+# fails without it. Installed as root, before the dependencies, so the layer survives changes in uv.lock.
+RUN apt-get update \
+    && apt-get install --no-install-recommends --yes libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
+
+# The base dependencies plus the group `ml` (scikit-learn, xgboost, lightgbm, catboost, optuna, mlflow, shap, ...).
+RUN --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
+    --mount=type=bind,source=uv.lock,target=uv.lock \
+    uv sync --frozen --no-dev --no-default-groups --group ml
+
+COPY src ./src
+COPY scripts ./scripts
+COPY config ./config
+
+# The model card step renders this template with the hand-written notes; without the notes it stops.
+COPY docs/model_card.md.j2 docs/model_card_notes.md ./docs/
 
 USER app
 

@@ -1,4 +1,6 @@
 # Local stack for phases 0-7. In phase 8 MLflow moves into kind.
+# The pipeline images (docker/pipeline) join this network with `docker run --network docker-kubernetes-ml_default` to
+# reach MLflow at http://mlflow:5000 (see "Pipeline images" in README.md); nothing here changes for them.
 services:
   mlflow-db:
     image: postgres:16
