@@ -64,7 +64,7 @@ docker run --rm --network docker-kubernetes-ml_default --env-file .env -e MLFLOW
 
 The champion is loaded with `load_champion` (`runs:/<run>/model`), not with `models:/f1-race-pace@champion`: that URI does not resolve for this registry, not even from the host. `sys.path.insert` is needed because the stored model pickles classes from `src/training/`; the scripts do the same.
 
-Steps that write outside `/app/data` (`explain` writes `site/charts/`, `model_card` writes `MODEL_CARD.md`) lose those files when the container ends; they keep running locally until the training DAG decides where they go.
+Steps that write outside `/app/data` (`explain` writes `site/charts/`, `model_card` writes `MODEL_CARD.md`) lose those files when the container ends. In the cluster the DAG `explain_champion` writes them inside `/app/data/outputs/` and `k8s/fetch-outputs.sh` brings them back (see the training and explain routines below).
 
 ## Kubernetes cluster
 
@@ -137,6 +137,8 @@ kubectl get secret postgres -n f1 -o jsonpath='{.data.AIRFLOW_ADMIN_PASSWORD}' |
 kubectl apply -k k8s                # after changing a DAG in dags/: a changed file is read in about a minute, a new file can take about five; no restart
 kubectl exec -n f1 airflow-scheduler-0 -c scheduler -- airflow dags list                # the DAGs Airflow has loaded
 kubectl exec -n f1 airflow-scheduler-0 -c scheduler -- airflow dags list-import-errors  # `No data found` when every DAG file imports
+k8s/fetch-outputs.sh                # after `explain_champion`: copies the charts and the model card from the cluster volume to site/charts/ and MODEL_CARD.md (never commits)
+helm upgrade airflow apache-airflow/airflow --version 1.22.0 -n f1 -f k8s/airflow/values.yaml --timeout 10m   # after changing k8s/airflow/values.yaml (restarts the Airflow pods)
 ```
 
 The DAG `smoke_pod` (trigger it from the UI) launches one pod of each image and is the quick check that the cluster, the permissions and the images work.
@@ -160,6 +162,22 @@ k8s/run-step.sh data scripts/next_race.py --which next    # the race `prediction
 k8s/run-step.sh data scripts/next_race.py --which last    # the race `ground_truth` would run for
 k8s/run-step.sh data scripts/next_race.py --which next --year 2026 --round 20   # checks that the race exists
 ```
+
+**Training and explain routines** (the DAGs `training` and `explain_champion` have no schedule: trigger them by hand from the Airflow UI)
+
+| When | Do | Params |
+| --- | --- | --- |
+| To try one or two models | Trigger `training` | `models` = comma-separated config keys, e.g. `ridge,elasticnet`: it samples, trains only those and skips `evaluate` (about 5 minutes for those two) |
+| New races, or a new configuration worth the test | Trigger `training` | `models` empty: the six models in series and then `evaluate` (about 18 minutes) |
+| The candidate is worth it | `uv run python scripts/promote.py <model_version_id>` by hand | the version of `f1-race-pace` that `evaluate` picked (MLflow UI); needs the MLflow port-forward above |
+| After promoting | Trigger `explain_champion`, then `k8s/fetch-outputs.sh` | no params |
+| Then | Review `git diff` and commit `site/charts/` and `MODEL_CARD.md` by hand | |
+
+`training` has these tasks: `choose_models` (checks the names in `models` before anything runs, so a wrong key fails at once), `sample` (a new sampling run, the thread of the training), `train` (one pod per model, one at a time; the first one also runs the baseline and the floor) and, only when `models` is empty, `evaluate`. Every run starts with its own sampling run, and `evaluate` scores the test once for it, so every full run is one use of the test: run it when there are new races or a configuration worth it, and use `models` for everything else. The DAG never promotes: the `champion` alias changes only with `scripts/promote.py`. There are no retries: a failed task with a `STOPPED:` line means something has to change first, and a live OpenF1 session blocks `sample` (trigger again 30 minutes after it ends).
+
+`explain_champion` runs `explain` and then `model_card` on the current champion, and writes the charts and the card in `/app/data/outputs/` of the cluster volume (`explain` also upserts `shap_values`). `k8s/fetch-outputs.sh` replaces `site/charts/` and `MODEL_CARD.md` in the repository with them, refuses if there is nothing on the volume yet, and never commits.
+
+After changing a script in `src/` or `scripts/` (or `docs/model_card_notes.md`, which the `ml` image bakes in), rebuild the `ml` image, load it again with `kind load docker-image f1-pipeline-ml:0.1.0 --name f1` and run `docker image prune`; the pods keep running the old image otherwise.
 
 **Rebuild from scratch**
 
