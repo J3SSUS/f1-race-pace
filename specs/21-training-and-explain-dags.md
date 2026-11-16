@@ -1,6 +1,6 @@
 # SPEC 21 — Training and explain DAGs
 
-> **Status:** Approved
+> **Status:** Implemented
 > **Depends on:** SPEC 06 (sampling), SPEC 09 (the `training` step), SPEC 10 (`evaluate`), SPEC 11 (`explain`), SPEC 12 (`model_card`), SPEC 18 (the pipeline images), SPEC 19 (the kind cluster), SPEC 20 (`dags/f1_pods.py`, XCom between pods and the `pods/exec` permission)
 > **Backlog:** Phase 8 of `docs/backlog.md`: "Training DAG: sampling → preprocess → training → evaluate (selection, SHAP, model card)". Evidently, the retraining trigger through Airflow's REST API, the cutoff parameter and the shadow model are Phase 9
 > **Date:** 2026-11-15
