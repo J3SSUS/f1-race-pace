@@ -78,7 +78,8 @@ apiServer:
 scheduler:
   resources:
     requests: {memory: 512Mi, cpu: 200m}
-    limits: {memory: 1Gi}
+    # LocalExecutor runs the tasks in this container: 1Gi was OOMKilled by `training` (SPEC 21, DECISIONS.md 2026-11-15).
+    limits: {memory: 1536Mi}
   logGroomerSidecar:
     resources:
       requests: {memory: 64Mi, cpu: 10m}
