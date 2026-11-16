@@ -41,9 +41,10 @@ with DAG(
     start_date=datetime(2026, 11, 1),
     catchup=False,
     params={
+        # `null` is allowed so the form can be sent empty (a plain string param is required there).
         "models": Param(
-            "",
-            type="string",
+            None,
+            type=["null", "string"],
             description="Comma-separated config keys (e.g. ridge,elasticnet); empty trains all six and evaluates",
         ),
     },
