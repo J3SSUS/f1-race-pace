@@ -1,4 +1,5 @@
-"""Train and evaluate a candidate, on demand: `sample`, one `train` pod per model in series, and `evaluate`.
+"""Train and evaluate a candidate, on demand: `sample`, one `train` pod per model in series, `evaluate` and, for a
+retraining, an optional `refit`.
 
 Param `models` is a comma-separated list of config keys. Empty trains the six models and runs `evaluate`; filled trains
 only those, in config order, and skips `evaluate` because the selection needs the baseline and the six models. The
@@ -11,6 +12,12 @@ a wrong name or a badly written cutoff fails in seconds and not after the OpenF1
 Param `cutoff` (`YYYY-R`, for example `2026-10`) makes the run a walk-forward retraining: the sampling uses the races
 through that round (SPEC 22). Empty uses `data` of `config/training.json`. Here only the format is checked, because
 the Airflow image has no project code; `sample.py` stops if the cutoff is not a race already held.
+
+Param `refit` (off by default, SPEC 23) adds `refit` after `evaluate`: the candidate and the baseline are trained again
+on every race up to the cutoff, as new versions that nobody promotes. It is for a retraining only, so it needs a filled
+`cutoff` and an empty `models` (`evaluate`, which picks the candidate, runs only when all six train); any other
+combination fails in `check_refit`, before anything is downloaded. `scripts/refit.py` is the authority and also stops
+if there is no finished `evaluate` or if the candidate does not beat the baseline on the test.
 """
 
 from __future__ import annotations
@@ -44,6 +51,19 @@ def parse_cutoff_param(text: str | None) -> str | None:
     return value
 
 
+def check_refit_params(refit: bool, cutoff: str | None, models: str | None) -> None:
+    """Raises if `refit` is on without a cutoff (a first training is never refit) or with `models` filled.
+
+    A raise fails the task; `retries=0` makes it a single attempt. With `refit` off it checks nothing.
+    """
+    if not refit:
+        return
+    if not (cutoff or "").strip():
+        raise ValueError("refit needs a cutoff: it is for a retraining, a first training is never refit")
+    if (models or "").strip():
+        raise ValueError("refit needs models empty: evaluate, which picks the candidate, runs only when all six train")
+
+
 def select_models(text: str | None) -> list[str]:
     """The models to train for the param `models`: all of them if it is empty, otherwise the names given.
 
@@ -75,6 +95,12 @@ with DAG(
             type=["null", "string"],
             description="Races through this round, YYYY-R (e.g. 2026-10); empty uses the data range of the config",
         ),
+        "refit": Param(
+            False,
+            type="boolean",
+            description="After evaluate, train the candidate and the baseline again on every race up to the cutoff; "
+            "needs a cutoff and models empty",
+        ),
     },
     default_args={"retries": 0},
     tags=["training", "cluster", "kind"],
@@ -90,6 +116,11 @@ with DAG(
         return parse_cutoff_param((params or {}).get("cutoff")) or ""
 
     @task
+    def check_refit(params=None) -> None:
+        params = params or {}
+        check_refit_params(bool(params.get("refit")), params.get("cutoff"), params.get("models"))
+
+    @task
     def sample_arguments(cutoff: str) -> list[str]:
         arguments = ["scripts/sample.py", "--output", "/airflow/xcom/return.json"]
         return arguments + ["--cutoff", cutoff] if cutoff else arguments
@@ -101,6 +132,10 @@ with DAG(
     @task.short_circuit
     def all_models(params=None) -> bool:
         return not ((params or {}).get("models") or "").strip()
+
+    @task.short_circuit
+    def refit_enabled(params=None) -> bool:
+        return bool((params or {}).get("refit"))
 
     models = choose_models()
     sample = KubernetesPodOperator(
@@ -122,5 +157,11 @@ with DAG(
         arguments=["scripts/evaluate.py", "{{ ti.xcom_pull(task_ids='sample')['run_id'] }}"],
         **pod_kwargs("ml"),
     )
-    models >> sample
-    train >> all_models() >> evaluate
+    refit = KubernetesPodOperator(
+        task_id="refit",
+        name="refit",
+        arguments=["scripts/refit.py", "{{ ti.xcom_pull(task_ids='sample')['run_id'] }}"],
+        **pod_kwargs("ml"),
+    )
+    [models, check_refit()] >> sample
+    train >> all_models() >> evaluate >> refit_enabled() >> refit
