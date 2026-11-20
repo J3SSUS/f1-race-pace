@@ -1,6 +1,6 @@
 # SPEC 23 — Final refit on all races up to the cutoff
 
-> **Status:** Approved
+> **Status:** Implemented
 > **Depends on:** SPEC 06 (sampling), SPEC 09 (the `training` step and the versions), SPEC 10 (`evaluate`), SPEC 18 (the pipeline images), SPEC 21 (the `training` DAG), SPEC 22 (the cutoff)
 > **Backlog:** Phase 9 of `docs/backlog.md`: "Final refit on all races up to the cutoff": after the models are chosen on the train and the test is used once, the chosen recipe is trained again on every race up to the cutoff, as a new `model_versions` row that never touches the `champion` alias. Its evaluation is forward, on races after the cutoff (SPEC 24)
 > **Date:** 2026-11-19
@@ -161,9 +161,9 @@ Each step leaves the system working. The files are written by the agent; every c
 
 **The `training` DAG**
 
-- [ ] The form of `training` shows `refit` off by default, and the DAG still has no schedule.
+- [ ] The form of `training` shows `refit` off by default, and the DAG still has no schedule. (The default is `Param(False)`; the form was not looked at: `DECISIONS.md`, 2026-11-19, "not verified".)
 - [ ] With `refit` on and `cutoff` empty, and with `refit` on, `cutoff = 2026-10` and `models = ridge`, `check_refit` fails with a message that names the problem, nothing else runs, there is no new sampling run and the task has one attempt.
-- [ ] With `refit` off, the tasks `refit_enabled` and `refit` do not run and the DAG ends as in SPEC 22.
+- [ ] With `refit` off, the tasks `refit_enabled` and `refit` do not run and the DAG ends as in SPEC 22. (Covered by reading the code, not by a run: `DECISIONS.md`, 2026-11-19, "not verified".)
 - [ ] `airflow dags list-import-errors`, run in the scheduler pod, is empty.
 
 **The real run** (`cutoff = 2026-10`, `models` empty, `refit` on)
