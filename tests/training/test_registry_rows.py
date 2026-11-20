@@ -6,6 +6,7 @@ from features.store import StoreError
 from training.registry import (
     METRIC_NAMES,
     feature_set_id_of,
+    last_race_id,
     last_train_race_id,
     metric_rows,
     model_version_row,
@@ -96,3 +97,34 @@ def test_split_without_train_races_raises():
 def test_metric_rows_are_train_by_default_and_take_another_split():
     assert {r["split"] for r in metric_rows(1, CV)} == {"train"}
     assert {r["split"] for r in metric_rows(1, CV, split="test")} == {"test"}
+
+
+RACES = {
+    "races": [
+        {"race_id": 30, "year": 2024, "round": 2},
+        {"race_id": 10, "year": 2023, "round": 22},
+        {"race_id": 20, "year": 2024, "round": 1},
+        {"race_id": 40, "year": 2024, "round": 3},
+    ]
+}
+
+
+def test_last_race_is_the_last_of_the_whole_split_and_the_last_train_race_is_not_changed():
+    client = FakeSupabase(RACES)
+    split = split_frame([(2024, 3, "test"), (2024, 2, "train"), (2023, 22, "train"), (2024, 1, "train")])
+    assert last_race_id(client, split) == 40  # the test race, the one a refit trains through
+    assert last_train_race_id(client, split) == 30
+
+
+def test_last_race_with_no_test_part_is_the_last_train_race():
+    split = split_frame([(2024, 2, "train"), (2023, 22, "train")])
+    assert last_race_id(FakeSupabase(RACES), split) == last_train_race_id(FakeSupabase(RACES), split) == 30
+
+
+def test_last_race_needs_a_race_in_the_table_and_a_race_in_the_split():
+    with pytest.raises(StoreError, match="race 2024 round 3 is not in races"):
+        last_race_id(
+            FakeSupabase({"races": [{"race_id": 1, "year": 2024, "round": 1}]}), split_frame([(2024, 3, "test")])
+        )
+    with pytest.raises(StoreError, match="no race"):
+        last_race_id(FakeSupabase(RACES), split_frame([]))

@@ -8,8 +8,16 @@ from mlflow import MlflowClient
 from test_digests import write_session
 from test_ingest_races import FakeEnsure, FakeIngest
 
-from common.config import TrainingConfig, load_config
-from training.sampling import EXPERIMENT, SamplingError, SamplingResult, read_split, run_sampling
+from common.config import CONFIG_PATH, Cutoff, TrainingConfig, load_config
+from training.sampling import (
+    EXPERIMENT,
+    SamplingError,
+    SamplingResult,
+    check_cutoff_is_held,
+    parse_cutoff,
+    read_split,
+    run_sampling,
+)
 
 TODAY = datetime(2025, 1, 1, tzinfo=UTC)
 SESSIONS = ["FP2", "Q", "R"]
@@ -131,3 +139,81 @@ def test_log_receives_one_line_per_race(uri, tmp_path, raw_dir):
     lines: list[str] = []
     sample(uri, tmp_path, raw_dir, log=lines.append)
     assert len(lines) == 10
+
+
+# --- the cutoff of a run (SPEC 22) ---
+
+
+def test_parse_cutoff_reads_year_and_round():
+    assert parse_cutoff("2026-10", 2023) == Cutoff(year=2026, round=10)
+    assert parse_cutoff(" 2024-1 ", 2023) == Cutoff(year=2024, round=1)
+
+
+@pytest.mark.parametrize("text", ["", "foo", "2026", "2026-", "2026-x", "26-10", "2026-10-1", "2026/10", "-2026-10"])
+def test_parse_cutoff_rejects_a_text_that_is_not_year_round(text):
+    with pytest.raises(SamplingError, match="is not YYYY-R"):
+        parse_cutoff(text, 2023)
+
+
+def test_parse_cutoff_rejects_round_zero_and_a_year_before_first_year():
+    with pytest.raises(SamplingError, match="at least 1"):
+        parse_cutoff("2026-0", 2023)
+    with pytest.raises(SamplingError, match="before first_year"):
+        parse_cutoff("2022-1", 2023)
+
+
+def test_check_cutoff_is_held_accepts_the_last_race_and_no_cutoff():
+    races = [(2024, 1), (2024, 2), (2024, 3)]
+    check_cutoff_is_held(races, Cutoff(year=2024, round=3))
+    check_cutoff_is_held(races, None)
+    check_cutoff_is_held([], None)
+
+
+def test_check_cutoff_is_held_names_the_cutoff_and_the_last_held_race():
+    held = r"cutoff 2024-30 is not a held race \(the last held race is 2024 round 3\)"
+    with pytest.raises(SamplingError, match=held):
+        check_cutoff_is_held([(2024, 1), (2024, 2), (2024, 3)], Cutoff(year=2024, round=30))
+    with pytest.raises(SamplingError, match="no race is held up to it"):
+        check_cutoff_is_held([], Cutoff(year=2024, round=1))
+
+
+def test_a_cutoff_argument_selects_only_the_races_through_it(uri, tmp_path, raw_dir):
+    result = sample(uri, tmp_path, raw_dir, cutoff="2024-5")
+    assert (result.train_races, result.test_races) == (4, 1)
+    manifest = json.loads(result.manifest_path.read_text())
+    assert manifest["config"]["cutoff"] == {"year": 2024, "round": 5}
+    (run,) = runs(uri)
+    assert run.data.params["cutoff"] == "2024-5"
+
+
+def test_a_cutoff_argument_wins_over_the_cutoff_of_the_config(uri, tmp_path, raw_dir):
+    result = sample(uri, tmp_path, raw_dir, config=config(cutoff={"year": 2024, "round": 9}), cutoff="2024-5")
+    assert (result.train_races, result.test_races) == (4, 1)
+
+
+def test_without_a_cutoff_argument_the_selection_is_the_same_as_before(uri, tmp_path, raw_dir):
+    result = sample(uri, tmp_path, raw_dir)
+    assert (result.train_races, result.test_races) == (8, 2)
+    assert json.loads(result.manifest_path.read_text())["config"]["cutoff"] is None
+
+
+@pytest.mark.parametrize("cutoff", ["2024-30", "2024-11", "2025-1", "foo", "2024-0", "2023-1"])
+def test_a_bad_or_not_held_cutoff_stops_before_any_run_or_ingestion(uri, tmp_path, raw_dir, cutoff):
+    ingest = FakeIngest()
+    with pytest.raises(SamplingError):
+        sample(uri, tmp_path, raw_dir, ingest=ingest, cutoff=cutoff)
+    assert ingest.calls == []
+    assert runs(uri) == []
+    assert not (tmp_path / "splits").exists()
+
+
+def test_the_message_of_a_not_held_cutoff_names_the_last_held_race(uri, tmp_path, raw_dir):
+    held = r"cutoff 2024-30 is not a held race \(the last held race is 2024 round 10\)"
+    with pytest.raises(SamplingError, match=held):
+        sample(uri, tmp_path, raw_dir, cutoff="2024-30")
+
+
+def test_a_cutoff_argument_does_not_touch_the_config_file(uri, tmp_path, raw_dir):
+    before = CONFIG_PATH.read_bytes()
+    sample(uri, tmp_path, raw_dir, cutoff="2024-5")
+    assert CONFIG_PATH.read_bytes() == before

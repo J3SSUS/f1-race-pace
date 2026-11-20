@@ -152,3 +152,10 @@ def test_a_clean_chain_passes(fake_src: Path):
     reached = reached_third_party([script], src=fake_src)
     assert reached == {"pandas": ["step.py", "common/util.py", "pandas"]}
     assert not set(reached) & ml_packages()
+
+
+def test_refit_is_an_ml_step_and_not_a_data_script():
+    """`refit` loads models and MLflow, so it runs in the `ml` image and must never be listed as a `data` script."""
+    assert "refit" not in DATA_SCRIPTS
+    reached = reached_third_party([ROOT / "scripts" / "refit.py"])
+    assert {"mlflow", "sklearn"} <= set(reached) & ml_packages()
