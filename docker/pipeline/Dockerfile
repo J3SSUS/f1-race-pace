@@ -4,7 +4,7 @@
 #   docker build -f docker/pipeline/Dockerfile --target ml -t f1-pipeline-ml:0.1.0 .
 #
 # `data` runs the steps that never touch a model: ingest, load_reference, load_features and ground_truth.
-# `ml` runs every step that touches a model or MLflow: sample, train, evaluate, explain, model_card, predict, backtest.
+# `ml` runs every step that touches a model or MLflow: sample, train, evaluate, refit, explain, model_card, predict, backtest.
 #
 # The step is the command and ENTRYPOINT is `python`, so a pod only sets `arguments`:
 #
