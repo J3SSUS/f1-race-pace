@@ -8,6 +8,7 @@ import hashlib
 import json
 import os
 import platform
+import re
 import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -22,7 +23,7 @@ from dotenv import load_dotenv
 from mlflow import MlflowClient
 from mlflow.exceptions import MlflowException
 
-from common.config import TrainingConfig, load_config
+from common.config import Cutoff, TrainingConfig, load_config
 from common.supabase_io import ENV_PATH
 from ingestion.reference import ReferenceDataError, ensure_race_entries
 from ingestion.schedule import expected_sessions, load_schedules
@@ -47,6 +48,38 @@ class SamplingError(Exception):
     def __init__(self, message: str, problems: list[dict] | None = None):
         super().__init__(message)
         self.problems = problems or []
+
+
+CUTOFF_FORMAT = re.compile(r"(\d{4})-(\d{1,2})")
+
+
+def parse_cutoff(text: str, first_year: int) -> Cutoff:
+    """The `Cutoff` of a text like `2026-10`: the year and the round, in that order.
+
+    This is the only parser of the `--cutoff` option. Raises `SamplingError` if the text is not `YYYY-R`, if the round
+    is below 1 or if the year is before `first_year` (OpenF1 has no earlier data).
+    """
+    match = CUTOFF_FORMAT.fullmatch((text or "").strip())
+    if match is None:
+        raise SamplingError(f"cutoff {text!r} is not YYYY-R (for example 2026-10)")
+    year, round = int(match.group(1)), int(match.group(2))
+    if round < 1:
+        raise SamplingError(f"cutoff {text!r} has round {round}: a round is at least 1")
+    if year < first_year:
+        raise SamplingError(f"cutoff {text!r} is before first_year ({first_year})")
+    return Cutoff(year=year, round=round)
+
+
+def check_cutoff_is_held(races: list[tuple[int, int]], cutoff: Cutoff | None) -> None:
+    """Raises `SamplingError` unless the last race selected is the cutoff, that is, unless the cutoff was held.
+
+    `select_races` keeps only the races already held, so a cutoff that does not exist or is still to come would
+    otherwise train on everything held, under a cutoff the run did not use.
+    """
+    if cutoff is None or (races and races[-1] == (cutoff.year, cutoff.round)):
+        return
+    last = f"the last held race is {races[-1][0]} round {races[-1][1]}" if races else "no race is held up to it"
+    raise SamplingError(f"cutoff {cutoff.year}-{cutoff.round} is not a held race ({last})")
 
 
 @dataclass
@@ -303,6 +336,7 @@ class SamplingResult:
 def run_sampling(
     config: TrainingConfig | None = None,
     *,
+    cutoff: str | None = None,
     client=None,
     raw_dir: Path = RAW_DIR,
     split_dir: Path = SPLIT_DIR,
@@ -315,15 +349,20 @@ def run_sampling(
 ) -> SamplingResult:
     """The `sampling` step: select the races, split them, ingest and check their sessions, register the run.
 
-    Raises `SamplingError` before any MLflow run is opened if there are no races, if the split leaves the train or
-    the test part empty, or if a Q or R session cannot be used. `config=None` loads `config/training.json`.
+    Raises `SamplingError` before any MLflow run is opened if the cutoff is not a held race, if there are no races, if
+    the split leaves the train or the test part empty, or if a Q or R session cannot be used. `config=None` loads
+    `config/training.json`. `cutoff` (text `YYYY-R`) replaces `data.cutoff` of the config for this run; the file is
+    not touched.
     """
     config = config or load_config()
+    if cutoff is not None:
+        data = config.data.model_copy(update={"cutoff": parse_cutoff(cutoff, config.data.first_year)})
+        config = config.model_copy(update={"data": data})
     if schedule is None:
-        cutoff = config.data.cutoff
-        last_year = config.data.last_year if cutoff is None else cutoff.year
+        last_year = config.data.last_year if config.data.cutoff is None else config.data.cutoff.year
         schedule = load_schedules(config.data.first_year, last_year)
     races = select_races(schedule, config, today)
+    check_cutoff_is_held(races, config.data.cutoff)
     labels = split_races(races, config.split.test_fraction)
     counts = labels["split"].value_counts()
     if counts.get("train", 0) == 0 or counts.get("test", 0) == 0:
