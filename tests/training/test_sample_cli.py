@@ -74,3 +74,43 @@ def test_output_is_not_written_when_the_step_stops(cli, uri, tmp_path, raw_dir):
     code, _ = run(cli, uri, tmp_path, raw_dir, FakeIngest({(2024, 4, "R"): "failed"}), argv=["--output", str(target)])
     assert code == 1
     assert not target.exists()
+
+
+def test_cutoff_reaches_the_sampler_and_limits_the_races(cli, uri, tmp_path, raw_dir):  # noqa: F811
+    code, lines = run(cli, uri, tmp_path, raw_dir, argv=["--cutoff", "2024-5"])
+    assert code == 0
+    assert len([line for line in lines if line.startswith("2024 round")]) == 5
+    assert lines[-3].startswith("train: 4 races, digest ")
+    assert lines[-2].startswith("test: 1 races, digest ")
+
+
+def test_cutoff_with_output_writes_the_run_id(cli, uri, tmp_path, raw_dir):  # noqa: F811
+    target = tmp_path / "return.json"
+    code, lines = run(cli, uri, tmp_path, raw_dir, argv=["--cutoff", "2024-5", "--output", str(target)])
+    assert code == 0
+    assert json.loads(target.read_text()) == {"run_id": lines[-1].removeprefix("run_id: ")}
+
+
+@pytest.mark.parametrize("cutoff", ["2024-30", "foo", "2024-0"])
+def test_a_bad_or_not_held_cutoff_exits_1_with_stopped_and_writes_nothing(cli, uri, tmp_path, raw_dir, cutoff):  # noqa: F811
+    target = tmp_path / "return.json"
+    ingest = FakeIngest()
+    code, lines = run(cli, uri, tmp_path, raw_dir, ingest, argv=["--cutoff", cutoff, "--output", str(target)])
+    assert code == 1
+    assert lines == [lines[0]] and lines[0].startswith("STOPPED: ") and "cutoff" in lines[0]
+    assert ingest.calls == []
+    assert not target.exists()
+    assert not (tmp_path / "splits").exists()
+
+
+def test_without_cutoff_the_sampler_gets_none(cli):
+    seen = {}
+
+    def sampler(**kwargs):
+        seen.update(kwargs)
+        raise cli.SamplingError("stop here")
+
+    assert cli.main([], sampler=sampler, out=lambda line: None) == 1
+    assert seen["cutoff"] is None
+    cli.main(["--cutoff", "2026-10"], sampler=sampler, out=lambda line: None)
+    assert seen["cutoff"] == "2026-10"
