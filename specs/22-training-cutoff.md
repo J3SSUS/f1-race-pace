@@ -1,6 +1,6 @@
 # SPEC 22 — Cutoff parameter for the training DAG
 
-> **Status:** Approved
+> **Status:** Implemented
 > **Depends on:** SPEC 06 (sampling), SPEC 09 (the `training` step), SPEC 10 (`evaluate`), SPEC 18 (the pipeline images), SPEC 21 (the `training` DAG)
 > **Backlog:** Phase 9 of `docs/backlog.md`: "Walk-forward retraining 2026": parametrize the training DAG with a race cutoff, same 80/20 split up to it, each run registers a `model_versions` row with `trained_through_race_id`, it never touches the `champion` alias. The shadow (`is_shadow`) moves to SPEC 25 and the predictions of non-champion models to SPEC 24
 > **Date:** 2026-11-19
