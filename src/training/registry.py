@@ -73,17 +73,32 @@ def feature_set_id_of(client, version: str) -> int:
     return sets[0]["feature_set_id"]
 
 
+def _race_id(client, year: int, round_: int) -> int:
+    """`races.race_id` of the race `(year, round_)`; `StoreError` if it is not in `races`."""
+    races = [r for r in read_table(client, "races", "race_id,year,round") if (r["year"], r["round"]) == (year, round_)]
+    if not races:
+        raise StoreError(f"race {year} round {round_} is not in races: run scripts/load_reference.py first")
+    return races[0]["race_id"]
+
+
 def last_train_race_id(client, split: pd.DataFrame) -> int:
     """`races.race_id` of the last race, by `(year, round)`, of the train part of `split` (`read_split`)."""
     train = split[split["split"] == "train"]
     if train.empty:
         raise StoreError("the split has no train race")
     last = train.sort_values(["year", "round"]).iloc[-1]
-    year, round_ = int(last["year"]), int(last["round"])
-    races = [r for r in read_table(client, "races", "race_id,year,round") if (r["year"], r["round"]) == (year, round_)]
-    if not races:
-        raise StoreError(f"race {year} round {round_} is not in races: run scripts/load_reference.py first")
-    return races[0]["race_id"]
+    return _race_id(client, int(last["year"]), int(last["round"]))
+
+
+def last_race_id(client, split: pd.DataFrame) -> int:
+    """`races.race_id` of the last race, by `(year, round)`, of the whole `split`, train and test.
+
+    It is the race a refit trains through: with a cutoff, the cutoff race.
+    """
+    if split.empty:
+        raise StoreError("the split has no race")
+    last = split.sort_values(["year", "round"]).iloc[-1]
+    return _race_id(client, int(last["year"]), int(last["round"]))
 
 
 def register_in_mlflow(mlflow_run_id: str, tracking_uri: str | None = None) -> str:
@@ -160,3 +175,44 @@ def register_version(name: str, mlflow_run_id: str, client, tracking_uri: str | 
     model_version_id = stored["model_version_id"]
     upsert_rows(client, "metrics", metric_rows(model_version_id, cv_means), METRICS_KEY)
     return Version(name, algorithm, mlflow_run_id, mlflow_version, model_version_id)
+
+
+REFIT_STEP = "refit"  # the `step` tag of the run of a refit (SPEC 23)
+
+
+def register_refit(name: str, mlflow_run_id: str, client, tracking_uri: str | None = None) -> Version:
+    """Register a finished refit run as a version: MLflow first, then its `model_versions` row, and no `metrics`.
+
+    A refit trained on every race of its sampling run, so any metric computed on those rows would mislead and none
+    is written. The row carries `trained_through_race_id` = the last race of the whole split (the cutoff race) and
+    `is_shadow = false`. The run must be `FINISHED`, tagged `step = refit` and `sampling_run_id`, with an `algorithm`
+    the table accepts and a logged model. Everything that can be wrong is checked before anything is written.
+    Registering the same run twice changes nothing; if Supabase raises, the MLflow version stays and a rerun
+    completes the row. It never promotes.
+    """
+    ml = MlflowClient(resolve_tracking_uri(tracking_uri))
+    try:
+        run = ml.get_run(mlflow_run_id)
+    except MlflowException as exc:
+        raise ValueError(f"No MLflow run '{mlflow_run_id}'") from exc
+    if run.info.status != "FINISHED":
+        raise ValueError(f"MLflow run '{mlflow_run_id}' is {run.info.status}, not FINISHED")
+    if run.data.tags.get("step") != REFIT_STEP:
+        raise ValueError(f"MLflow run '{mlflow_run_id}' is not a refit run (tag step = '{run.data.tags.get('step')}')")
+    algorithm = run.data.tags.get("algorithm", "")
+    if algorithm not in VERSION_ALGORITHMS:
+        raise ValueError(
+            f"MLflow run '{mlflow_run_id}' has algorithm '{algorithm}'; allowed: {sorted(VERSION_ALGORITHMS)}"
+        )
+    sampling_run_id = run.data.tags.get(SAMPLING_TAG, "")
+    if not sampling_run_id:
+        raise ValueError(f"MLflow run '{mlflow_run_id}' has no sampling_run_id tag")
+
+    feature_set_id = feature_set_id_of(client, load_catalog().version)
+    race_id = last_race_id(client, read_split(sampling_run_id, tracking_uri))
+
+    mlflow_version = register_in_mlflow(mlflow_run_id, tracking_uri)
+
+    row = model_version_row(algorithm, mlflow_run_id, feature_set_id, race_id)
+    (stored,) = upsert_rows(client, "model_versions", [row], "mlflow_run_id")
+    return Version(name, algorithm, mlflow_run_id, mlflow_version, stored["model_version_id"])
