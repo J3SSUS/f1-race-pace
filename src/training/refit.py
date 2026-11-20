@@ -47,6 +47,7 @@ class RefitResult:
     version: Version
     rows: int  # valid rows the model was fitted on
     races: int  # distinct races among them
+    trained_through: tuple[int, int]  # (year, round) of the last race of the split: the cutoff race
     reused: bool  # True if a finished refit run was already there and nothing was fitted
 
 
@@ -160,6 +161,8 @@ def run_refit(
     names = [candidate, BASELINE]
     sources = {name: _source_run(sampling_run_id, name, uri) for name in names}
     experiment_id = ml.get_run(sampling_run_id).info.experiment_id
+    last_race = read_split(sampling_run_id, uri).iloc[-1]  # sorted by (year, round)
+    trained_through = (int(last_race["year"]), int(last_race["round"]))
     client = client if client is not None else get_client()
     existing = {name: _finished_refit(ml, experiment_id, sampling_run_id, sources[name]) for name in names}
 
@@ -202,5 +205,6 @@ def run_refit(
                 mlflow.sklearn.log_model(fitted[name], name="model", serialization_format="cloudpickle")
             run_id = run.info.run_id
             reused = False
-        results.append(RefitResult(name, register_refit(name, run_id, client, uri), rows, races, reused))
+        version = register_refit(name, run_id, client, uri)
+        results.append(RefitResult(name, version, rows, races, trained_through, reused))
     return results

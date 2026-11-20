@@ -86,6 +86,7 @@ def test_the_candidate_and_the_baseline_are_refit_and_registered(uri, ready, sup
     results = run_refit(ready, supabase, uri, loader)
     assert [r.name for r in results] == ["ridge", "baseline"]
     assert all(isinstance(r, RefitResult) and not r.reused for r in results)
+    assert [r.trained_through for r in results] == [(2024, 3), (2024, 3)]
     assert loader.calls == 1
     rows = supabase.tables["model_versions"]
     assert [(r["algorithm"], r["trained_through_race_id"], r["is_shadow"]) for r in rows] == [

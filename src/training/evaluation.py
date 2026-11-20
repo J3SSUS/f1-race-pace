@@ -1,7 +1,9 @@
 """The evaluation of the candidate and the baseline on the test races.
 
-This is the only module that reads the test target. The test is touched once, only for the candidate and the
-baseline, after the selection has been made from the out-of-fold predictions of train.
+This is the only module that reads the test target to score a model. The test is touched once, only for the
+candidate and the baseline, after the selection has been made from the out-of-fold predictions of train. The one
+other reader is `training.refit`, which reads the test races as training data and only after this module has used
+them once to report (SPEC 23): it refuses to run without a finished `evaluate` run.
 """
 
 from collections.abc import Callable
