@@ -399,16 +399,17 @@ def _read_feature_set(client) -> FeatureSet:
 
 
 @dataclass(frozen=True)
-class _Plan:
+class RacePlan:
     todo: list[ActiveModel]  # the models that write predictions for this race, the champion first
     skipped: dict[str, str]  # role -> why it writes nothing (already predicted, or the race is not after its cutoff)
     broken: dict[str, str]  # role -> why it cannot predict (a challenger that did not load, or has no cutoff)
 
 
-def _plan(client, models: Models, ref: RaceRef, year: int, round: int) -> _Plan:
+def plan_race(client, models: Models, entry_ids: set[int], year: int, round: int) -> RacePlan:
     """Which active models write predictions for the race: not the ones that already did, and the challenger only
-    when the race is after its `trained_through_race_id` by `(year, round)`. Reads `predictions` and `races` only."""
-    entries = set(ref.entry_ids.values())
+    when the race is after its `trained_through_race_id` by `(year, round)`. `entry_ids` are the entries of the race
+    (empty if it is not in Supabase yet). Reads `predictions` and `races` only."""
+    entries = entry_ids
     done: dict[int, str] = {}
     for p in read_table(client, "predictions", "entry_id,model_version_id,generated_at"):
         if p["entry_id"] in entries:
@@ -433,10 +434,10 @@ def _plan(client, models: Models, ref: RaceRef, year: int, round: int) -> _Plan:
                 todo.append(active)
         else:
             todo.append(active)
-    return _Plan(todo, skipped, broken)
+    return RacePlan(todo, skipped, broken)
 
 
-def _nothing_to_predict(plan: _Plan, models: Models, label: str) -> PredictionError:
+def _nothing_to_predict(plan: RacePlan, models: Models, label: str) -> PredictionError:
     """The error of a race that no active model writes: the guard of SPEC 14, now for every active model."""
     if len(models.active) == 1 and not plan.broken:  # only the champion: the wording of SPEC 14
         version_id = models.champion.model_version_id
@@ -503,7 +504,7 @@ def predict_race(
     """Predict one race with every active model from the data up to Saturday and store it.
 
     The models are loaded first (so a missing champion alias stops the run before anything is written), then the
-    schedule, then `build_race_features` with the guard `_plan`: the models that already predicted the race, and a
+    schedule, then `build_race_features` with the guard `plan_race`: the models that already predicted the race, and a
     challenger whose cutoff is not before the race, write nothing; if no model writes, the run stops right after the
     race exists with nothing more written. The features are upserted into `feature_values` once, after the first
     model to write has every entry predicted; then each model gets one `prediction_runs` row and one `predictions`
@@ -515,7 +516,7 @@ def predict_race(
     """
     run_id = run_id or uuid.uuid4().hex
     label = f"{year} round {round}"
-    plan: dict[str, _Plan] = {}
+    plan: dict[str, RacePlan] = {}
     try:
         client = client if client is not None else get_client()
         models = models if models is not None else load_models(client, tracking_uri)
@@ -532,7 +533,7 @@ def predict_race(
         start = race_start(schedule, year, round)
 
         def guard(ref: RaceRef) -> None:
-            plan["plan"] = _plan(client, models, ref, year, round)
+            plan["plan"] = plan_race(client, models, set(ref.entry_ids.values()), year, round)
             if not plan["plan"].todo:
                 raise _nothing_to_predict(plan["plan"], models, label)
 

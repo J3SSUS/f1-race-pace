@@ -2,7 +2,8 @@
 
 The loop only calls `predict_race` (SPEC 14) and `write_ground_truth` (SPEC 13); it adds the order, the skipping of
 what is done and the stop at the first failure. The `walk_forward` metrics of the year are recomputed at the end with
-`walk_forward_metrics`. A race predicted by the champion's version is never predicted again.
+`walk_forward_metrics`. A race is predicted by every active model that has not predicted it (the champion and, on the
+races after its cutoff, the challenger of SPEC 24); a prediction of a model's version is never repeated.
 """
 
 import time
@@ -21,7 +22,7 @@ from ingestion.schedule import held_events, load_schedule
 from ingestion.session import RAW_DIR, Loader
 from live.ground_truth import GroundTruthError, write_ground_truth
 from live.metrics import MetricsResult, walk_forward_metrics
-from live.prediction import Models, PredictionError, load_models, predict_race
+from live.prediction import Models, PredictionError, load_models, plan_race, predict_race
 
 
 class BacktestError(Exception):
@@ -34,8 +35,9 @@ class RaceOutcome:
     round: int
     prediction: str  # "predicted" | "skipped" (the champion's version had already predicted it)
     ground_truth: str  # "written" | "present"
-    prediction_run_id: int | None  # of the run this call made; None when skipped
-    is_late: bool | None  # of that run; None when skipped
+    prediction_run_id: int | None  # of the champion's run this call made; None when it was skipped
+    is_late: bool | None  # of the run(s) this call made; None when nothing was predicted
+    challenger: str = ""  # "" without a challenger; else "predicted" | "skipped (already predicted)" | "skipped (...)"
 
 
 @dataclass(frozen=True)
@@ -47,24 +49,33 @@ class BacktestResult:
     metrics: MetricsResult
 
 
-def _race_state(client, year: int, round: int, champion_id: int) -> tuple[bool, bool]:
-    """`(predicted, has_ground_truth)` of one race in Supabase; a race that is not there has neither."""
+def _race_state(client, year: int, round: int) -> tuple[set[int], bool]:
+    """`(entry ids, has_ground_truth)` of one race in Supabase; a race that is not there has no entries and no truth."""
     race = next(
         (r for r in read_table(client, "races", "race_id,year,round") if (r["year"], r["round"]) == (year, round)), None
     )
     if race is None:
-        return False, False
+        return set(), False
     entries = {
         e["entry_id"] for e in read_table(client, "race_entries", "entry_id,race_id") if e["race_id"] == race["race_id"]
     }
     if not entries:
-        return False, False
-    predicted = any(
-        p["model_version_id"] == champion_id and p["entry_id"] in entries
-        for p in read_table(client, "predictions", "entry_id,model_version_id")
-    )
+        return set(), False
     with_truth = {g["entry_id"] for g in read_table(client, "ground_truth", "entry_id")}
-    return predicted, entries <= with_truth
+    return entries, entries <= with_truth
+
+
+def _challenger_outcome(models: Models, plan, predicted: bool) -> str:
+    """The challenger's column of a `RaceOutcome`: "" if there is none, else what it did (or why it did not)."""
+    if models.challenger is None:
+        return ""
+    if "challenger" in plan.skipped:
+        return (
+            "skipped (already predicted)"
+            if plan.skipped["challenger"].startswith("already")
+            else ("skipped (race at or before its cutoff)")
+        )
+    return "predicted" if predicted else ""
 
 
 def backtest_season(
@@ -86,10 +97,12 @@ def backtest_season(
 ) -> BacktestResult:
     """Backtest the races held of `year` in `[from_round, to_round]`, then recompute the `walk_forward` metrics.
 
-    Per race, in round order: predict unless the champion's version already did, then write the ground truth unless
-    the race has it. The first failure raises `BacktestError` naming the race; what earlier races wrote stays and a
-    rerun continues. `on_race` is called as each race ends. With `metrics_only` nothing is ingested, predicted or
-    loaded: only the metrics are recomputed. `MetricsError` of the final step is raised as it is.
+    Per race, in round order: predict with every active model that has not predicted it (the challenger only on the
+    races after its cutoff), then write the ground truth unless the race has it. The first failure raises
+    `BacktestError` naming the race; what earlier races wrote stays and a rerun continues. A challenger that cannot
+    predict is such a failure, raised after the champion of that race is stored. `on_race` is called as each race
+    ends. With `metrics_only` nothing is ingested, predicted or loaded: only the metrics are recomputed.
+    `MetricsError` of the final step is raised as it is.
     """
     run_id = run_id or uuid.uuid4().hex
     client = client if client is not None else get_client()
@@ -117,14 +130,14 @@ def backtest_season(
         ]
         held = set(held_events(schedule, now).query("year == @year")["round"].astype(int))
         not_held = [r for r in in_range if r not in held]
-        champion_id = models.champion.model_version_id
 
         for round in (r for r in in_range if r in held):
             label = f"{year} round {round}"
             try:
-                predicted, has_truth = _race_state(client, year, round, champion_id)
+                entries, has_truth = _race_state(client, year, round)
+                plan = plan_race(client, models, entries, year, round)
                 result = None
-                if not predicted:
+                if plan.todo or plan.broken:  # a broken challenger is passed on so that the run stops loudly
                     result = predict_race(
                         year,
                         round,
@@ -146,13 +159,15 @@ def backtest_season(
                     truth = "present"
             except (PredictionError, GroundTruthError, StoreError, RuntimeError) as exc:
                 raise BacktestError(f"{label}: {exc}") from None
+            champion_run = None if result is None else result.prediction_run_id
             outcome = RaceOutcome(
                 year,
                 round,
-                "skipped" if result is None else "predicted",
+                "skipped" if champion_run is None else "predicted",
                 truth,
-                None if result is None else result.prediction_run_id,
+                champion_run,
                 None if result is None else result.is_late,
+                _challenger_outcome(models, plan, result is not None),
             )
             races.append(outcome)
             if on_race is not None:

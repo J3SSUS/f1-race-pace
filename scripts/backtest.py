@@ -1,13 +1,14 @@
 """Backtest a season race by race and recompute its `walk_forward` metrics.
 
 For every race already held in the range (the last session of its event ended), in round order: predicts it with the
-champion from the data up to Saturday unless the champion's version already did (never overwritten), then writes its
-ground truth unless it has it. Then recomputes the `walk_forward` metrics of every model version with
-predictions and of its baseline, each on its own rows, and stores them in `metrics`. A rerun skips what is done.
-`--metrics-only` ingests and predicts
-nothing: it only recomputes the metrics (MLflow is still needed to find the baseline). Exits with code 1 and a
-`STOPPED:` line at the first race that fails (what earlier races wrote stays), if the OpenF1 schedule is blocked by a
-live session (retry 30 minutes after it ends), if there is no valid champion, or if the metrics cannot be computed.
+champion, and with the challenger if there is one (SPEC 24; only on the races after its cutoff), from the data up to
+Saturday, unless that model's version already did (never overwritten). Then writes its ground truth unless it has it.
+Then recomputes the `walk_forward` metrics of every model version with predictions and of its baseline, each on its
+own rows, and stores them in `metrics`. A rerun skips what is done. `--metrics-only` ingests and predicts nothing: it
+only recomputes the metrics (MLflow is still needed to find the baselines). Exits with code 1 and a `STOPPED:` line
+at the first race that fails (what earlier races wrote stays; a challenger that cannot predict also stops it, after
+the champion of that race is stored), if the OpenF1 schedule is blocked by a live session (retry 30 minutes after it
+ends), if there is no valid champion, or if the metrics cannot be computed.
 
     uv run python scripts/backtest.py --year 2026 [--from-round 1] [--to-round 16] [--metrics-only]
 """
@@ -47,7 +48,8 @@ def race_line(outcome: RaceOutcome) -> str:
         prediction = "skipped (already predicted)"
     else:
         prediction = f"predicted ({'late' if outcome.is_late else 'on time'})"
-    return f"{outcome.year} round {outcome.round}: {prediction}, ground truth {outcome.ground_truth}"
+    challenger = f", challenger {outcome.challenger}" if outcome.challenger else ""
+    return f"{outcome.year} round {outcome.round}: {prediction}{challenger}, ground truth {outcome.ground_truth}"
 
 
 def rounds_text(rounds: list[int]) -> str:
