@@ -5,7 +5,9 @@ now the chosen recipe is trained again on **all** the races of the sampling run,
 enter the model. The pipelines are `sklearn.base.clone` of the ones already logged (same hyperparameters, no Optuna),
 and each refit is a run `refit-<name>` and a version of `f1-race-pace` that nobody promotes: no `champion` alias, no
 `champion_history`, and no `metrics` rows, because any number on rows the model trained on would mislead. Its
-evaluation is the forward one, on races after the cutoff (SPEC 24).
+evaluation is the forward one, on races after the cutoff. The one alias it sets is `challenger` (SPEC 24), on the
+candidate and only after both versions and their rows exist: the prediction flow then predicts with it next to the
+champion. A new refit moves the alias, so there is one challenger at a time.
 
 The test is a gate. The step stops, and writes nothing, if the sampling run has no cutoff, if there is no finished
 `evaluate` run, if that run has no `candidate`, or if the candidate's test MAE is not lower than the baseline's. The
@@ -14,7 +16,7 @@ test target is read here as training data, after `evaluate` used it once: that i
 """
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import mlflow
 import mlflow.sklearn
@@ -27,7 +29,14 @@ from common.supabase_io import get_client
 from features.store import read_wide
 from training.data import NOT_FEATURES, TARGET, TrainSet
 from training.evaluation import EVALUATE
-from training.registry import REFIT_STEP, Version, register_refit
+from training.registry import (
+    CHALLENGER_ALIAS,
+    CHAMPION_ALIAS,
+    REFIT_STEP,
+    REGISTERED_MODEL,
+    Version,
+    register_refit,
+)
 from training.sampling import SAMPLING_TAG, read_split, resolve_tracking_uri
 from training.selection import BASELINE
 from training.step import finished_run_id
@@ -49,6 +58,8 @@ class RefitResult:
     races: int  # distinct races among them
     trained_through: tuple[int, int]  # (year, round) of the last race of the split: the cutoff race
     reused: bool  # True if a finished refit run was already there and nothing was fitted
+    alias: str = ""  # the candidate only: "set" | "moved" | "unchanged" | "champion"; "" for the baseline
+    replaced: str = ""  # with "moved": the MLflow version that held the `challenger` alias before
 
 
 def load_all_races(
@@ -121,6 +132,23 @@ def check_gate(sampling_run_id: str, ml: MlflowClient, uri: str) -> tuple[str, s
     return candidate, cutoff
 
 
+def set_challenger(ml: MlflowClient, mlflow_version: str) -> tuple[str, str]:
+    """Put the `challenger` alias on `mlflow_version` of `f1-race-pace`: `(what happened, the version it replaced)`.
+
+    `"set"` (nobody had it), `"moved"` (another version had it: the second item names it), `"unchanged"` (it was
+    already there) or `"champion"` (the version is the champion, for example after a promotion and a rerun: it is
+    not a challenger and the alias is left alone). Never touches the `champion` alias.
+    """
+    aliases = ml.get_registered_model(REGISTERED_MODEL).aliases
+    if str(aliases.get(CHAMPION_ALIAS)) == mlflow_version:
+        return "champion", ""
+    current = aliases.get(CHALLENGER_ALIAS)
+    if current is not None and str(current) == mlflow_version:
+        return "unchanged", ""
+    ml.set_registered_model_alias(REGISTERED_MODEL, CHALLENGER_ALIAS, mlflow_version)
+    return ("moved", str(current)) if current is not None else ("set", "")
+
+
 def _source_run(sampling_run_id: str, name: str, uri: str) -> str:
     run_id = finished_run_id(sampling_run_id, name, uri)
     if run_id is None:
@@ -154,6 +182,9 @@ def run_refit(
     (the gate, the source runs, loading both models and the rows, fitting) runs first. A finished refit run of the
     same sampling run and source is reused: nothing is fitted and only a missing registration is completed, so
     running it again is safe. Never promotes. Returns the candidate first, then the baseline.
+
+    Last, after both versions and their `model_versions` rows exist, the candidate gets the `challenger` alias
+    (`set_challenger`): the one alias a refit sets, never `champion`. A stop or a failure before that sets nothing.
     """
     uri = resolve_tracking_uri(tracking_uri)
     ml = MlflowClient(uri)
@@ -207,4 +238,6 @@ def run_refit(
             reused = False
         version = register_refit(name, run_id, client, uri)
         results.append(RefitResult(name, version, rows, races, trained_through, reused))
+    alias, replaced = set_challenger(ml, results[0].version.mlflow_version)
+    results[0] = replace(results[0], alias=alias, replaced=replaced)
     return results

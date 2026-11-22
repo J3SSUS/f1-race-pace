@@ -33,7 +33,7 @@ from live.ground_truth import GroundTruthError, read_race_ref, write_ground_trut
 from live.history import missing_ground_truth, read_history
 from live.sessions import ingest_checked
 from training.explain import ALIAS, Champion, load_champion
-from training.registry import REFIT_STEP, REGISTERED_MODEL, feature_set_id_of
+from training.registry import CHALLENGER_ALIAS, REFIT_STEP, REGISTERED_MODEL, feature_set_id_of
 from training.sampling import SAMPLING_TAG, resolve_tracking_uri
 
 EXTRA_SESSIONS = ("FP2", "S")  # read by the features besides Q (which ensure_race_entries ingests); R is never ingested
@@ -41,9 +41,6 @@ EXTRA_SESSIONS = ("FP2", "S")  # read by the features besides Q (which ensure_ra
 
 class PredictionError(Exception):
     """A reason to stop, worded for the user. Never carries a response body or a key."""
-
-
-CHALLENGER_ALIAS = "challenger"  # set by `scripts/refit.py` (SPEC 24); at most one version has it
 
 
 @dataclass(frozen=True)

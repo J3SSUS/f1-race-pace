@@ -4,7 +4,9 @@ For a retraining, after `scripts/evaluate.py`. The pipelines that `train.py` log
 no Optuna) and fitted on all the valid rows of the sampling run, train and test, so the newest races enter the model.
 Each refit is a run `refit-<name>` and a new version of `f1-race-pace` with a `model_versions` row whose
 `trained_through_race_id` is the cutoff race; no `metrics` rows are written and nothing is promoted. Prints one line per
-model. Safe to run again: a finished refit of the same sampling run is reused.
+model and one `challenger:` line: after both versions exist the candidate gets the MLflow alias `challenger` (SPEC 24),
+which the prediction flow reads; a new refit moves it. Safe to run again: a finished refit of the same sampling run is
+reused and the alias is not moved if it is already there.
 Exits with code 1 and a `STOPPED:` line, writing nothing, if it cannot: an unknown sampling run, a sampling run with no
 cutoff (a first training is never refit), no finished `evaluate` run, no candidate, a candidate whose test MAE is not
 lower than the baseline's, a missing run or a Supabase error.
@@ -36,6 +38,17 @@ def describe(result: RefitResult) -> str:
     )
 
 
+def describe_alias(result: RefitResult) -> str:
+    version = result.version.mlflow_version
+    if result.alias == "moved":
+        return f"challenger: version {version} (replaces version {result.replaced})"
+    if result.alias == "unchanged":
+        return f"challenger: version {version} (already set)"
+    if result.alias == "champion":
+        return f"challenger: not set, version {version} is the champion"
+    return f"challenger: version {version}"
+
+
 def main(
     argv: list[str] | None = None,
     *,
@@ -53,6 +66,7 @@ def main(
         return 1
     for result in results:
         out(describe(result))
+    out(describe_alias(results[0]))
     return 0
 
 

@@ -67,6 +67,14 @@ def ready(uri, parent, trained):
     return parent
 
 
+def aliases_of(uri) -> dict[str, str]:
+    """The aliases of `f1-race-pace` as `{alias: version}`; empty if the model was never registered."""
+    client = MlflowClient(uri)
+    if not client.search_registered_models():
+        return {}
+    return {alias: str(version) for alias, version in client.get_registered_model(REGISTERED_MODEL).aliases.items()}
+
+
 def all_runs(uri):
     client = MlflowClient(uri)
     return client.search_runs([e.experiment_id for e in client.search_experiments()])
@@ -125,7 +133,7 @@ def test_the_refit_pipeline_keeps_the_hyperparameters_but_is_fitted_again(uri, r
 
 def test_the_refit_never_promotes(uri, ready, supabase):  # noqa: F811
     run_refit(ready, supabase, uri, Loader())
-    assert all(not v.aliases for v in mlflow_versions(uri))
+    assert all("champion" not in v.aliases for v in mlflow_versions(uri))  # the one alias it sets is `challenger`
     assert supabase.tables.get("champion_history", []) == []
 
 
@@ -163,8 +171,10 @@ def test_a_failure_in_the_second_registration_is_completed_by_a_rerun(uri, ready
     flaky = Flaky(supabase, "model_versions")
     with pytest.raises(RuntimeError, match="model_versions"):
         run_refit(ready, flaky, uri, Loader())
+    assert aliases_of(uri) == {}  # the alias waits for both versions and their rows
     flaky.broken = False
     results = run_refit(ready, flaky, uri, Loader())
+    assert aliases_of(uri) == {"challenger": results[0].version.mlflow_version}
     assert [r.name for r in results] == ["ridge", "baseline"]
     assert len(mlflow_versions(uri)) == 2
     assert len(supabase.tables["model_versions"]) == 2
@@ -290,3 +300,94 @@ def test_no_valid_rows_raises():
 def test_the_registered_model_name_is_the_one_of_training(uri, ready, supabase):  # noqa: F811
     run_refit(ready, supabase, uri, Loader())
     assert {v.name for v in mlflow_versions(uri)} == {REGISTERED_MODEL}
+
+
+# --- the `challenger` alias (SPEC 24) ---
+
+
+@pytest.fixture
+def second(uri, tmp_path) -> str:
+    """Another retraining ready to refit: its own sampling run, tuned ridge and baseline, and a passing evaluate."""
+    other = register_run(
+        make_parts(),
+        config(cutoff={"year": 2024, "round": 3}),
+        [],
+        split_dir=tmp_path / "s2",
+        tracking_uri=uri,
+        now=NOW,
+    )
+    tune(uri, other, "ridge", trials=2)
+    run_candidate("baseline", "baseline", qualifying_baseline(), train_set(), other, 5, uri)
+    make_evaluate(uri, other)
+    return other
+
+
+def test_the_candidate_gets_the_challenger_alias_and_the_baseline_gets_none(uri, ready, supabase):  # noqa: F811
+    candidate, baseline = run_refit(ready, supabase, uri, Loader())
+
+    assert aliases_of(uri) == {"challenger": candidate.version.mlflow_version}
+    assert (candidate.alias, candidate.replaced, baseline.alias) == ("set", "", "")
+    by_version = {str(v.version): v.aliases for v in mlflow_versions(uri)}
+    assert by_version[baseline.version.mlflow_version] == []
+
+
+def test_a_new_refit_moves_the_alias_and_names_the_version_it_replaced(uri, ready, second, supabase):  # noqa: F811
+    first = run_refit(ready, supabase, uri, Loader())[0]
+
+    candidate = run_refit(second, supabase, uri, Loader())[0]
+
+    assert (candidate.alias, candidate.replaced) == ("moved", first.version.mlflow_version)
+    assert aliases_of(uri) == {"challenger": candidate.version.mlflow_version}  # one challenger at a time
+    assert first.version.mlflow_version != candidate.version.mlflow_version
+
+
+def test_running_the_same_refit_again_moves_nothing(uri, ready, supabase):  # noqa: F811
+    first = run_refit(ready, supabase, uri, Loader())[0]
+
+    again = run_refit(ready, supabase, uri, Loader())[0]
+
+    assert (again.alias, again.replaced) == ("unchanged", "")
+    assert aliases_of(uri) == {"challenger": first.version.mlflow_version}
+
+
+def test_a_rerun_sets_the_alias_on_a_refit_made_before_it_existed(uri, ready, supabase):  # noqa: F811
+    first = run_refit(ready, supabase, uri, Loader())[0]
+    MlflowClient(uri).delete_registered_model_alias(REGISTERED_MODEL, "challenger")  # as a refit of SPEC 23 left it
+    assert aliases_of(uri) == {}
+
+    again = run_refit(ready, supabase, uri, Loader())[0]
+
+    assert again.reused and again.alias == "set"
+    assert aliases_of(uri) == {"challenger": first.version.mlflow_version}
+
+
+def test_the_champion_alias_is_never_touched(uri, ready, second, supabase):  # noqa: F811
+    first, baseline = run_refit(ready, supabase, uri, Loader())
+    MlflowClient(uri).set_registered_model_alias(REGISTERED_MODEL, "champion", baseline.version.mlflow_version)
+
+    candidate = run_refit(second, supabase, uri, Loader())[0]
+
+    assert aliases_of(uri) == {
+        "champion": baseline.version.mlflow_version,
+        "challenger": candidate.version.mlflow_version,
+    }
+    assert supabase.tables.get("champion_history", []) == []
+
+
+def test_a_candidate_that_became_champion_is_not_made_challenger_again_by_a_rerun(uri, ready, supabase):  # noqa: F811
+    first = run_refit(ready, supabase, uri, Loader())[0]
+    client = MlflowClient(uri)  # SPEC 25 will do this: the challenger becomes champion and loses its alias
+    client.set_registered_model_alias(REGISTERED_MODEL, "champion", first.version.mlflow_version)
+    client.delete_registered_model_alias(REGISTERED_MODEL, "challenger")
+
+    again = run_refit(ready, supabase, uri, Loader())[0]
+
+    assert again.alias == "champion"
+    assert aliases_of(uri) == {"champion": first.version.mlflow_version}
+
+
+def test_a_refit_stopped_at_the_gate_sets_no_alias(uri, parent, trained, supabase):  # noqa: F811
+    make_evaluate(uri, parent, test_mae=0.6, baseline_mae=0.5)
+    with pytest.raises(RefitError, match="the gate"):
+        run_refit(parent, supabase, uri, Loader())
+    assert aliases_of(uri) == {}
