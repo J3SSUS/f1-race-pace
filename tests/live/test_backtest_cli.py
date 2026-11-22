@@ -10,8 +10,10 @@ SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "backtest.py"
 SECRET = "service-key-that-must-not-leak"
 METRICS = MetricsResult(
     2026,
-    ModelMetrics(4, "ridge", 17, 328, {"mae": 0.4621}),
-    ModelMetrics(3, "baseline", 17, 328, {"mae": 0.5714}),
+    (
+        ModelMetrics(4, "ridge", 17, 328, {"mae": 0.4621}),
+        ModelMetrics(3, "baseline", 17, 328, {"mae": 0.5714}, baseline_of=4),
+    ),
     80,
 )
 RACES = [

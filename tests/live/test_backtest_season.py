@@ -40,7 +40,7 @@ def calls(monkeypatch, season_db):
 
     def metrics(client, *, year, tracking_uri=None):
         log.append(("metrics", year))
-        return MetricsResult(year, "champion", "baseline", 0)
+        return MetricsResult(year, (), 0)
 
     monkeypatch.setattr(backtest, "predict_race", predict_race)
     monkeypatch.setattr(backtest, "write_ground_truth", write_ground_truth)
@@ -75,7 +75,7 @@ def test_only_the_held_races_are_processed_in_order_and_the_rest_are_not_held(ca
 def test_the_metrics_of_the_result_are_those_of_walk_forward_metrics(calls, season_db, season_schedule_frame):
     result = run(season_db, season_schedule_frame)
 
-    assert result.metrics == MetricsResult(2024, "champion", "baseline", 0)
+    assert result.metrics == MetricsResult(2024, (), 0)
 
 
 def test_a_race_already_predicted_is_skipped_and_one_with_ground_truth_is_present(
