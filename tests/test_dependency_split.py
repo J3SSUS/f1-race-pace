@@ -159,3 +159,11 @@ def test_refit_is_an_ml_step_and_not_a_data_script():
     assert "refit" not in DATA_SCRIPTS
     reached = reached_third_party([ROOT / "scripts" / "refit.py"])
     assert {"mlflow", "sklearn"} <= set(reached) & ml_packages()
+
+
+def test_walk_forward_metrics_is_an_ml_step_and_not_a_data_script():
+    """It finds the baselines through MLflow, so it runs in the `ml` image; the ground truth step that precedes it in
+    the DAG stays in the `data` image, which has no MLflow (SPEC 24)."""
+    assert "walk_forward_metrics" not in DATA_SCRIPTS
+    reached = reached_third_party([ROOT / "scripts" / "walk_forward_metrics.py"])
+    assert {"mlflow", "sklearn"} <= set(reached) & ml_packages()
