@@ -33,7 +33,7 @@ from live.ground_truth import GroundTruthError, read_race_ref, write_ground_trut
 from live.history import missing_ground_truth, read_history
 from live.sessions import ingest_checked
 from training.explain import ALIAS, Champion, load_champion
-from training.registry import REGISTERED_MODEL, feature_set_id_of
+from training.registry import REFIT_STEP, REGISTERED_MODEL, feature_set_id_of
 from training.sampling import SAMPLING_TAG, resolve_tracking_uri
 
 EXTRA_SESSIONS = ("FP2", "S")  # read by the features besides Q (which ensure_race_entries ingests); R is never ingested
@@ -49,12 +49,17 @@ class Models:
     baseline: Pipeline  # the qualifying baseline of the champion's sampling run
 
 
-def find_baseline(client, ml: MlflowClient, sampling_run_id: str, rows: list[dict] | None = None) -> dict:
+def find_baseline(
+    client, ml: MlflowClient, sampling_run_id: str, rows: list[dict] | None = None, *, refit: bool = False
+) -> dict:
     """The `model_versions` row (`model_version_id`, `mlflow_run_id`) of the baseline of a sampling run.
 
     It is the row with algorithm `baseline` whose MLflow run carries the `sampling_run_id` tag; a baseline of another
-    sampling run is never picked and the newest one wins. `rows` are the `model_versions` rows when the caller has
-    already read them. Raises `PredictionError` naming the sampling run when there is none. Nothing is written.
+    sampling run is never picked and the newest one wins. A sampling run that was refit has two baselines with the
+    same tag, told apart by the `step` tag of their runs: `refit = True` takes only the one with `step = refit` (the
+    baseline of a refit version), `refit = False` (the default) only the ones without it (the baseline of a version
+    trained on the train part). `rows` are the `model_versions` rows when the caller has already read them. Raises
+    `PredictionError` naming the sampling run when there is none. Nothing is written.
     """
     if rows is None:
         rows = read_table(client, "model_versions", "model_version_id,mlflow_run_id,algorithm")
@@ -63,8 +68,12 @@ def find_baseline(client, ml: MlflowClient, sampling_run_id: str, rows: list[dic
             tags = ml.get_run(row["mlflow_run_id"]).data.tags
         except MlflowException:
             continue  # a model_versions row whose run is gone cannot be it
-        if tags.get(SAMPLING_TAG) == sampling_run_id:
+        if tags.get(SAMPLING_TAG) == sampling_run_id and (tags.get("step") == REFIT_STEP) == refit:
             return row
+    if refit:
+        raise PredictionError(
+            f"there is no refit baseline model version for the sampling run {sampling_run_id}: run scripts/refit.py"
+        )
     raise PredictionError(
         f"there is no baseline model version for the champion's sampling run {sampling_run_id}: run scripts/baseline.py"
     )

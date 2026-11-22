@@ -134,3 +134,37 @@ def test_find_baseline_raises_naming_the_sampling_run_when_there_is_none(uri, pa
     log_version(uri, other_parent, supabase, "baseline")
     with pytest.raises(PredictionError, match=rf"no baseline.*sampling run {parent}"):
         find_baseline(supabase, MlflowClient(uri), parent)
+
+
+def test_find_baseline_gives_a_refit_version_the_refit_baseline(uri, parent, supabase):
+    """The two baselines of a refit sampling run carry the same tag; the kind picks between them."""
+    log_version(uri, parent, supabase, "baseline")
+    refit = log_version(uri, parent, supabase, "baseline", step="refit")
+    log_version(uri, parent, supabase, "baseline")  # a train-only baseline newer than the refit one
+
+    row = find_baseline(supabase, MlflowClient(uri), parent, refit=True)
+
+    assert row["model_version_id"] == refit.model_version_id
+
+
+def test_find_baseline_gives_a_train_only_version_the_baseline_without_the_refit_step(uri, parent, supabase):
+    train_only = log_version(uri, parent, supabase, "baseline")
+    log_version(uri, parent, supabase, "baseline", step="refit")  # newer, but the baseline of a refit
+
+    row = find_baseline(supabase, MlflowClient(uri), parent)
+
+    assert row["model_version_id"] == train_only.model_version_id
+
+
+def test_find_baseline_raises_naming_the_sampling_run_when_the_refit_has_no_baseline(uri, parent, supabase):
+    log_version(uri, parent, supabase, "baseline")  # train-only: it must not stand in for the refit one
+    with pytest.raises(PredictionError, match=rf"no refit baseline.*sampling run {parent}"):
+        find_baseline(supabase, MlflowClient(uri), parent, refit=True)
+
+
+def test_find_baseline_without_the_refit_flag_ignores_a_sampling_run_that_only_has_a_refit_baseline(
+    uri, parent, supabase
+):
+    log_version(uri, parent, supabase, "baseline", step="refit")
+    with pytest.raises(PredictionError, match=rf"no baseline.*sampling run {parent}"):
+        find_baseline(supabase, MlflowClient(uri), parent)
