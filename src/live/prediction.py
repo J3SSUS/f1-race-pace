@@ -373,6 +373,7 @@ class PredictionResult:
     ground_truth_filled: list[tuple[int, int]]  # earlier races whose ground truth this run wrote
     sessions: dict[str, str]  # "FP2" and "S" -> "downloaded" | "skipped" | "not in the event"
     models: tuple[ModelPrediction, ...] = ()  # one per active model, the champion first
+    feature_entries: int = 0  # entries whose features were upserted (the whole race, whichever model wrote)
 
 
 class ChallengerFailed(PredictionError):
@@ -613,6 +614,7 @@ def predict_race(
         built.ground_truth_filled,
         built.sessions,
         tuple(outcomes),
+        len(built.frame),
     )
     if failures:
         stored = " (the champion's predictions were stored)" if champion is not None else ""
