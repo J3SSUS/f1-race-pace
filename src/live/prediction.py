@@ -43,10 +43,31 @@ class PredictionError(Exception):
     """A reason to stop, worded for the user. Never carries a response body or a key."""
 
 
+CHALLENGER_ALIAS = "challenger"  # set by `scripts/refit.py` (SPEC 24); at most one version has it
+
+
+@dataclass(frozen=True)
+class ActiveModel:
+    """A model that predicts in the flow: its role, its version, its own baseline and where its training ended."""
+
+    role: str  # "champion" | "challenger"
+    version: Champion  # training.explain.Champion: model_version_id, mlflow_run_id, sampling_run_id, algorithm, model
+    baseline: Pipeline  # its own baseline: `find_baseline` by the kind of its run
+    trained_through_race_id: int | None = None  # the challenger's cutoff race; None for the champion (never skipped)
+
+
 @dataclass(frozen=True)
 class Models:
-    champion: Champion  # training.explain.Champion: model_version_id, mlflow_run_id, sampling_run_id, algorithm, model
+    champion: Champion
     baseline: Pipeline  # the qualifying baseline of the champion's sampling run
+    challenger: ActiveModel | None = None  # None when no version has the `challenger` alias
+    challenger_error: str = ""  # why the alias exists but the challenger could not be loaded; "" otherwise
+
+    @property
+    def active(self) -> tuple[ActiveModel, ...]:
+        """The champion first and, if it loaded, the challenger second."""
+        first = ActiveModel("champion", self.champion, self.baseline)
+        return (first, self.challenger) if self.challenger is not None else (first,)
 
 
 def find_baseline(
@@ -79,6 +100,17 @@ def find_baseline(
     )
 
 
+def _check_feature_set(client, row: dict, who: str) -> None:
+    """Raise `PredictionError` if the `model_versions` row was trained with another feature set than the catalog's."""
+    catalog = load_catalog()
+    expected = feature_set_id_of(client, catalog.version)
+    if row["feature_set_id"] != expected:
+        raise PredictionError(
+            f"{who} was trained with feature_set_id {row['feature_set_id']}, not the one of the catalog "
+            f"({catalog.version}, feature_set_id {expected}): predicting would feed it other features"
+        )
+
+
 def _check_and_find(client, uri: str) -> tuple[str, str]:
     """`(champion run id, baseline run id)`, after every check that needs no model; nothing is loaded here."""
     ml = MlflowClient(uri)
@@ -97,31 +129,73 @@ def _check_and_find(client, uri: str) -> tuple[str, str]:
     champion = next((r for r in rows if r["mlflow_run_id"] == run_id), None)
     if champion is None:
         raise PredictionError(f"the champion (run {run_id}) has no model_versions row: run scripts/train.py")
-    catalog = load_catalog()
-    expected = feature_set_id_of(client, catalog.version)
-    if champion["feature_set_id"] != expected:
-        raise PredictionError(
-            f"the champion was trained with feature_set_id {champion['feature_set_id']}, not the one of the catalog "
-            f"({catalog.version}, feature_set_id {expected}): predicting would feed it other features"
-        )
+    _check_feature_set(client, champion, "the champion")
 
-    baseline = find_baseline(client, ml, sampling_run_id, rows=rows)
+    is_refit = ml.get_run(run_id).data.tags.get("step") == REFIT_STEP  # a promoted refit keeps its own kind of baseline
+    baseline = find_baseline(client, ml, sampling_run_id, rows=rows, refit=is_refit)
     return run_id, baseline["mlflow_run_id"]
 
 
-def load_models(client=None, tracking_uri: str | None = None) -> Models:
-    """The champion (`training.explain.load_champion`) and the baseline of the same sampling run.
+def _load_challenger(client, uri: str, champion_run_id: str) -> tuple[ActiveModel | None, str]:
+    """`(challenger, "")`, `(None, "")` when there is none, or `(None, why)` when the alias exists but it cannot load.
 
-    The baseline is the `model_versions` row with algorithm `baseline` whose run carries the champion's
-    `sampling_run_id` tag (a baseline of another sampling run is never picked; the newest one wins if there are
-    several). Both are loaded through `runs:/<mlflow_run_id>/model`. Raises `PredictionError` when there is no
-    `champion` alias, the champion's feature set is not the one of the catalog, or there is no baseline for that
-    sampling run; all of those are checked before any model is loaded. Nothing is written.
+    A failure here never touches the champion: it comes back as text for `predict_race` to report after the champion
+    was stored. Its baseline is the one of its own kind (`find_baseline` with `refit` true when its run is a refit).
+    A version that also holds the `champion` alias has nothing to add and is not a challenger. Nothing is written.
+    """
+    ml = MlflowClient(uri)
+    try:  # the alias list tells "no challenger" from a failure: a missing alias is not a distinct MLflow error
+        if CHALLENGER_ALIAS not in ml.get_registered_model(REGISTERED_MODEL).aliases:
+            return None, ""
+        version = ml.get_model_version_by_alias(REGISTERED_MODEL, CHALLENGER_ALIAS)
+    except MlflowException as exc:
+        return None, f"the '{CHALLENGER_ALIAS}' alias could not be read ({type(exc).__name__})"
+    try:
+        run_id = version.tags.get("mlflow_run_id", "")
+        sampling_run_id = version.tags.get(SAMPLING_TAG, "")
+        if not run_id or not sampling_run_id:
+            raise PredictionError(
+                f"version {version.version} of {REGISTERED_MODEL} has no mlflow_run_id or sampling_run_id tag"
+            )
+        if run_id == champion_run_id:
+            return None, ""
+        rows = read_table(
+            client, "model_versions", "model_version_id,mlflow_run_id,algorithm,feature_set_id,trained_through_race_id"
+        )
+        row = next((r for r in rows if r["mlflow_run_id"] == run_id), None)
+        if row is None:
+            raise PredictionError(f"the challenger (run {run_id}) has no model_versions row")
+        _check_feature_set(client, row, "the challenger")
+        is_refit = ml.get_run(run_id).data.tags.get("step") == REFIT_STEP
+        baseline_row = find_baseline(client, ml, sampling_run_id, rows=rows, refit=is_refit)
+        mlflow.set_tracking_uri(uri)
+        model = mlflow.sklearn.load_model(f"runs:/{run_id}/model")
+        baseline = mlflow.sklearn.load_model(f"runs:/{baseline_row['mlflow_run_id']}/model")
+    except (PredictionError, ValueError, StoreError) as exc:  # the messages of all are worded for the user
+        return None, str(exc)
+    except Exception as exc:  # MLflow or Supabase down: the type only, never a body
+        return None, f"the challenger could not be loaded ({type(exc).__name__})"
+    loaded = Champion(row["model_version_id"], str(version.version), run_id, sampling_run_id, row["algorithm"], model)
+    return ActiveModel("challenger", loaded, baseline, row["trained_through_race_id"]), ""
+
+
+def load_models(client=None, tracking_uri: str | None = None) -> Models:
+    """The champion (`training.explain.load_champion`), its baseline and, if there is one, the challenger.
+
+    The champion's baseline is the `model_versions` row with algorithm `baseline` whose run carries the champion's
+    `sampling_run_id` tag and is not a refit (a baseline of another sampling run is never picked; the newest one wins
+    if there are several). Both are loaded through `runs:/<mlflow_run_id>/model`. Raises `PredictionError` when there
+    is no `champion` alias, the champion's feature set is not the one of the catalog, or there is no baseline for
+    that sampling run; all of those are checked before any model is loaded.
+
+    The challenger is whatever version holds the `challenger` alias, loaded after the champion. If it cannot load
+    (another feature set, no `model_versions` row, no baseline of its kind, a model that does not load) the champion
+    is still returned, with `challenger` None and the reason in `challenger_error`. Nothing is written.
     """
     uri = resolve_tracking_uri(tracking_uri)
     try:
         client = client if client is not None else get_client()
-        _, baseline_run_id = _check_and_find(client, uri)
+        champion_run_id, baseline_run_id = _check_and_find(client, uri)
         champion = load_champion(uri, client)
         baseline = mlflow.sklearn.load_model(f"runs:/{baseline_run_id}/model")
     except PredictionError:
@@ -130,7 +204,8 @@ def load_models(client=None, tracking_uri: str | None = None) -> Models:
         raise PredictionError(str(exc)) from None
     except Exception as exc:  # MLflow or Supabase down: the type only, never a body
         raise PredictionError(f"the models could not be loaded ({type(exc).__name__})") from None
-    return Models(champion, baseline)
+    challenger, challenger_error = _load_challenger(client, uri, champion_run_id)
+    return Models(champion, baseline, challenger, challenger_error)
 
 
 def race_start(schedule: pd.DataFrame, year: int, round: int) -> pd.Timestamp:

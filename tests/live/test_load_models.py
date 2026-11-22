@@ -168,3 +168,135 @@ def test_find_baseline_without_the_refit_flag_ignores_a_sampling_run_that_only_h
     log_version(uri, parent, supabase, "baseline", step="refit")
     with pytest.raises(PredictionError, match=rf"no baseline.*sampling run {parent}"):
         find_baseline(supabase, MlflowClient(uri), parent)
+
+
+def test_without_the_challenger_alias_models_has_one_active_model(uri, parent, supabase):
+    promote(uri, log_version(uri, parent, supabase, "ridge"))
+    log_version(uri, parent, supabase, "baseline")
+
+    models = load_models(supabase, uri)
+
+    assert models.challenger is None and models.challenger_error == ""
+    assert [m.role for m in models.active] == ["champion"]
+    assert models.active[0].version is models.champion and models.active[0].baseline is models.baseline
+
+
+def _with_a_challenger(uri, parent, supabase, step="refit"):
+    """A champion with its baseline, and a challenger (a refit by default) with a baseline of its own kind."""
+    promote(uri, log_version(uri, parent, supabase, "ridge"))
+    champion_baseline = log_version(uri, parent, supabase, "baseline")
+    challenger = log_version(uri, parent, supabase, "elasticnet", step=step)
+    challenger_baseline = log_version(uri, parent, supabase, "baseline", step=step)
+    promote(uri, challenger, alias="challenger")
+    return champion_baseline, challenger, challenger_baseline
+
+
+def test_the_challenger_is_the_second_active_model_with_the_baseline_of_its_own_kind(uri, parent, supabase):
+    champion_baseline, challenger, challenger_baseline = _with_a_challenger(uri, parent, supabase)
+    writes = list(supabase.writes)
+    loaded = []
+    real = mlflow.sklearn.load_model
+    mlflow.sklearn.load_model = lambda path: loaded.append(path) or real(path)
+    try:
+        models = load_models(supabase, uri)
+    finally:
+        mlflow.sklearn.load_model = real
+
+    first, second = models.active
+    assert (first.role, second.role) == ("champion", "challenger")
+    assert second.version.model_version_id == challenger.model_version_id
+    assert second.version.algorithm == "elasticnet" and second.version.sampling_run_id == parent
+    row = next(r for r in supabase.tables["model_versions"] if r["model_version_id"] == challenger.model_version_id)
+    assert second.trained_through_race_id == row["trained_through_race_id"]
+    assert models.challenger_error == ""
+    # the champion got the train-only baseline and the challenger the refit one, though both share the sampling run
+    assert f"runs:/{champion_baseline.mlflow_run_id}/model" in loaded
+    assert f"runs:/{challenger_baseline.mlflow_run_id}/model" in loaded
+    X = synthetic_X(6, seed=3)
+    assert len(second.version.model.predict(X)) == 6
+    assert supabase.writes == writes  # nothing written
+
+
+def test_a_challenger_that_is_not_a_refit_gets_the_train_only_baseline(uri, parent, supabase):
+    promote(uri, log_version(uri, parent, supabase, "ridge"))
+    log_version(uri, parent, supabase, "baseline")
+    challenger = log_version(uri, parent, supabase, "elasticnet")
+    train_only = log_version(uri, parent, supabase, "baseline")
+    log_version(uri, parent, supabase, "baseline", step="refit")  # newer, but the baseline of a refit
+    promote(uri, challenger, alias="challenger")
+    loaded = []
+    real = mlflow.sklearn.load_model
+    mlflow.sklearn.load_model = lambda path: loaded.append(path) or real(path)
+    try:
+        models = load_models(supabase, uri)
+    finally:
+        mlflow.sklearn.load_model = real
+
+    assert models.challenger is not None
+    assert loaded[-1] == f"runs:/{train_only.mlflow_run_id}/model"
+
+
+def test_a_challenger_with_another_feature_set_leaves_the_champion_loaded(uri, parent, supabase):
+    _, challenger, _ = _with_a_challenger(uri, parent, supabase)
+    supabase.tables["feature_sets"].append({"feature_set_id": 6, "version": "v0"})
+    next(r for r in supabase.tables["model_versions"] if r["model_version_id"] == challenger.model_version_id)[
+        "feature_set_id"
+    ] = 6
+
+    models = load_models(supabase, uri)
+
+    assert models.challenger is None
+    assert "the challenger was trained with feature_set_id 6" in models.challenger_error
+    assert [m.role for m in models.active] == ["champion"]
+    assert models.champion.algorithm == "ridge"
+
+
+def test_a_challenger_with_no_baseline_of_its_kind_leaves_the_champion_loaded(uri, parent, supabase):
+    promote(uri, log_version(uri, parent, supabase, "ridge"))
+    log_version(uri, parent, supabase, "baseline")  # train-only: it must not stand in for the refit baseline
+    promote(uri, log_version(uri, parent, supabase, "elasticnet", step="refit"), alias="challenger")
+
+    models = load_models(supabase, uri)
+
+    assert models.challenger is None
+    assert f"no refit baseline model version for the sampling run {parent}" in models.challenger_error
+    assert models.champion.algorithm == "ridge"
+
+
+def test_a_challenger_without_a_model_versions_row_leaves_the_champion_loaded(uri, parent, supabase):
+    _, challenger, _ = _with_a_challenger(uri, parent, supabase)
+    supabase.tables["model_versions"] = [
+        r for r in supabase.tables["model_versions"] if r["model_version_id"] != challenger.model_version_id
+    ]
+
+    models = load_models(supabase, uri)
+
+    assert models.challenger is None and "no model_versions row" in models.challenger_error
+    assert models.champion is not None
+
+
+def test_a_version_with_both_aliases_is_not_a_challenger(uri, parent, supabase):
+    champion = log_version(uri, parent, supabase, "ridge")
+    promote(uri, champion)
+    log_version(uri, parent, supabase, "baseline")
+    promote(uri, champion, alias="challenger")
+
+    models = load_models(supabase, uri)
+
+    assert models.challenger is None and models.challenger_error == ""
+    assert len(models.active) == 1
+
+
+def test_a_promoted_refit_champion_gets_the_refit_baseline(uri, parent, supabase):
+    log_version(uri, parent, supabase, "baseline")  # train-only baseline of the same sampling run
+    refit_baseline = log_version(uri, parent, supabase, "baseline", step="refit")
+    promote(uri, log_version(uri, parent, supabase, "ridge", step="refit"))
+    loaded = []
+    real = mlflow.sklearn.load_model
+    mlflow.sklearn.load_model = lambda path: loaded.append(path) or real(path)
+    try:
+        load_models(supabase, uri)
+    finally:
+        mlflow.sklearn.load_model = real
+
+    assert loaded[-1] == f"runs:/{refit_baseline.mlflow_run_id}/model"
