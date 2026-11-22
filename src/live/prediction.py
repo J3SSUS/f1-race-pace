@@ -3,7 +3,7 @@
 The race is created and its sessions are ingested with the shared code (`ensure_race_entries`, `ingest_session`),
 earlier races without ground truth are filled in with `write_ground_truth`, and the features are built with
 `race_features`. Only the champion predicts; the qualifying baseline of its sampling run goes in a column of the same
-row. A race already predicted by the champion's version is never overwritten.
+row. A race already predicted by a model's version is never overwritten.
 """
 
 import time
@@ -315,32 +315,49 @@ def build_race_features(
     return RaceFeatures(ref, frame, sessions, filled)
 
 
-def predict_entries(models: Models, frame: pd.DataFrame) -> pd.DataFrame:
+def _predict_with(model: Champion, baseline_model: Pipeline, frame: pd.DataFrame, who: str) -> pd.DataFrame:
     """One row per entry of `frame`: `driver`, `predicted_pace_delta_pct` and `baseline_pace_delta_pct`.
 
-    The champion gets the features of the catalog in catalog order (never the identification columns) and predicts
-    every entry, valid or not; its imputer handles a missing form feature. The baseline gets `quali_delta_pct` only
-    and is NaN where that is missing (it has no imputer: a number would be invented). A NaN champion prediction
-    raises `PredictionError`, because `predictions.predicted_pace_delta_pct` is `NOT NULL`. Nothing is written.
+    `model` gets the features of the catalog in catalog order (never the identification columns) and predicts every
+    entry, valid or not; its imputer handles a missing form feature. `baseline_model` gets `quali_delta_pct` only and
+    is NaN where that is missing (it has no imputer: a number would be invented). A NaN prediction raises
+    `PredictionError` naming `who`, because `predictions.predicted_pace_delta_pct` is `NOT NULL`. Nothing is written.
     """
     names = load_catalog().names
     features = frame[names]
-    champion = pd.Series(models.champion.model.predict(features), index=frame.index, dtype="float64")
-    if champion.isna().any():
-        drivers = ", ".join(frame.loc[champion.isna(), "driver"])
-        raise PredictionError(f"the champion predicted NaN for {drivers}: nothing was written")
+    predicted = pd.Series(model.model.predict(features), index=frame.index, dtype="float64")
+    if predicted.isna().any():
+        drivers = ", ".join(frame.loc[predicted.isna(), "driver"])
+        raise PredictionError(f"{who} predicted NaN for {drivers}: nothing was written")
 
     baseline = pd.Series(float("nan"), index=frame.index, dtype="float64")
     has_quali = frame["quali_delta_pct"].notna()
     if has_quali.any():
-        baseline[has_quali] = models.baseline.predict(frame.loc[has_quali, ["quali_delta_pct"]])
+        baseline[has_quali] = baseline_model.predict(frame.loc[has_quali, ["quali_delta_pct"]])
     return pd.DataFrame(
         {
             "driver": frame["driver"].to_numpy(),
-            "predicted_pace_delta_pct": champion.to_numpy(),
+            "predicted_pace_delta_pct": predicted.to_numpy(),
             "baseline_pace_delta_pct": baseline.to_numpy(),
         }
     )
+
+
+def predict_entries(models: Models, frame: pd.DataFrame) -> pd.DataFrame:
+    """`_predict_with` for the champion and its baseline (SPEC 14)."""
+    return _predict_with(models.champion, models.baseline, frame, "the champion")
+
+
+@dataclass(frozen=True)
+class ModelPrediction:
+    """What one active model did in a call: `predicted` (rows written) or `skipped` (and why)."""
+
+    role: str  # "champion" | "challenger"
+    model_version_id: int
+    status: str  # "predicted" | "skipped"
+    reason: str  # why it was skipped; "" when predicted
+    prediction_run_id: int | None
+    entries: int  # predictions written
 
 
 @dataclass(frozen=True)
@@ -348,13 +365,25 @@ class PredictionResult:
     year: int
     round: int
     run_id: str  # dag_run_id of prediction_runs and pipeline_run_id of feature_values
-    prediction_run_id: int
+    prediction_run_id: int | None  # the champion's; None if it was skipped
     model_version_id: int  # the champion's
-    entries: int  # predictions written
+    entries: int  # the champion's predictions written (0 if it was skipped)
     is_late: bool
     race_start: str  # ISO UTC, the R session of the schedule
     ground_truth_filled: list[tuple[int, int]]  # earlier races whose ground truth this run wrote
     sessions: dict[str, str]  # "FP2" and "S" -> "downloaded" | "skipped" | "not in the event"
+    models: tuple[ModelPrediction, ...] = ()  # one per active model, the champion first
+
+
+class ChallengerFailed(PredictionError):
+    """The champion was stored but the challenger could not be: `result` says what was written.
+
+    `scripts/predict.py` prints the lines of `result` and then `STOPPED:` with this message, exit code 1.
+    """
+
+    def __init__(self, message: str, result: PredictionResult):
+        super().__init__(message)
+        self.result = result
 
 
 def _read_feature_set(client) -> FeatureSet:
@@ -368,24 +397,92 @@ def _read_feature_set(client) -> FeatureSet:
     return FeatureSet(set_id, {name: ids[name] for name in catalog.names})
 
 
-def _refuse_if_predicted(client, model_version_id: int, label: str):
-    """The guard: `check` of `build_race_features`; a race already predicted by this model version stops the run."""
+@dataclass(frozen=True)
+class _Plan:
+    todo: list[ActiveModel]  # the models that write predictions for this race, the champion first
+    skipped: dict[str, str]  # role -> why it writes nothing (already predicted, or the race is not after its cutoff)
+    broken: dict[str, str]  # role -> why it cannot predict (a challenger that did not load, or has no cutoff)
 
-    def check(ref: RaceRef) -> None:
-        entries = set(ref.entry_ids.values())
-        done = [
-            p
-            for p in read_table(client, "predictions", "entry_id,model_version_id,generated_at")
-            if p["model_version_id"] == model_version_id and p["entry_id"] in entries
-        ]
-        if done:
-            when = min(str(p["generated_at"]) for p in done)
-            raise PredictionError(
-                f"{label} already has predictions of model version {model_version_id}, generated at {when}: "
-                "nothing was written; a Saturday prediction is never replaced (delete them by hand to predict again)"
-            )
 
-    return check
+def _plan(client, models: Models, ref: RaceRef, year: int, round: int) -> _Plan:
+    """Which active models write predictions for the race: not the ones that already did, and the challenger only
+    when the race is after its `trained_through_race_id` by `(year, round)`. Reads `predictions` and `races` only."""
+    entries = set(ref.entry_ids.values())
+    done: dict[int, str] = {}
+    for p in read_table(client, "predictions", "entry_id,model_version_id,generated_at"):
+        if p["entry_id"] in entries:
+            done[p["model_version_id"]] = min(str(p["generated_at"]), done.get(p["model_version_id"], "~"))
+    races = {r["race_id"]: (r["year"], r["round"]) for r in read_table(client, "races", "race_id,year,round")}
+    todo, skipped, broken = [], {}, {}
+    if models.challenger_error:
+        broken["challenger"] = models.challenger_error
+    for active in models.active:
+        version_id = active.version.model_version_id
+        if version_id in done:
+            skipped[active.role] = f"already has predictions generated at {done[version_id]}"
+        elif active.role == "challenger":
+            cutoff = races.get(active.trained_through_race_id)
+            if cutoff is None:
+                broken[active.role] = f"model version {version_id} has no known trained_through_race_id"
+            elif (year, round) <= cutoff:
+                skipped[active.role] = (
+                    f"the race is at or before its cutoff ({cutoff[0]} round {cutoff[1]}), which it trained on"
+                )
+            else:
+                todo.append(active)
+        else:
+            todo.append(active)
+    return _Plan(todo, skipped, broken)
+
+
+def _nothing_to_predict(plan: _Plan, models: Models, label: str) -> PredictionError:
+    """The error of a race that no active model writes: the guard of SPEC 14, now for every active model."""
+    if len(models.active) == 1 and not plan.broken:  # only the champion: the wording of SPEC 14
+        version_id = models.champion.model_version_id
+        when = plan.skipped["champion"].removeprefix("already has predictions generated at ")
+        return PredictionError(
+            f"{label} already has predictions of model version {version_id}, generated at {when}: "
+            "nothing was written; a Saturday prediction is never replaced (delete them by hand to predict again)"
+        )
+    reasons = [f"{role}: {reason}" for role, reason in {**plan.skipped, **plan.broken}.items()]
+    return PredictionError(
+        f"{label} has nothing to predict ({'; '.join(reasons)}): nothing was written; "
+        "a Saturday prediction is never replaced (delete them by hand to predict again)"
+    )
+
+
+def _store_predictions(
+    client, model_version_id: int, race_id: int, entry_ids: dict[str, int], predicted: pd.DataFrame, **meta
+) -> tuple[int, int]:
+    """Insert one `prediction_runs` row and one `predictions` row per entry of a model: `(run id, rows)`."""
+    run_row = insert_rows(
+        client,
+        "prediction_runs",
+        [
+            {
+                "race_id": race_id,
+                "model_version_id": model_version_id,
+                "dag_run_id": meta["run_id"],
+                "generated_at": meta["generated_at"],
+                "is_late": meta["is_late"],
+            }
+        ],
+    )[0]
+    rows = [
+        {
+            "prediction_run_id": run_row["prediction_run_id"],
+            "entry_id": entry_ids[record["driver"]],
+            "model_version_id": model_version_id,
+            "predicted_pace_delta_pct": float(record["predicted_pace_delta_pct"]),
+            "baseline_pace_delta_pct": (
+                None if pd.isna(record["baseline_pace_delta_pct"]) else float(record["baseline_pace_delta_pct"])
+            ),
+            "generated_at": meta["generated_at"],
+        }
+        for record in predicted.to_dict("records")
+    ]
+    insert_rows(client, "predictions", rows)
+    return run_row["prediction_run_id"], len(rows)
 
 
 def predict_race(
@@ -402,22 +499,25 @@ def predict_race(
     now: datetime | None = None,
     sleep: Callable[[float], None] = time.sleep,
 ) -> PredictionResult:
-    """Predict one race with the champion from the data up to Saturday and store it.
+    """Predict one race with every active model from the data up to Saturday and store it.
 
-    The champion and the baseline are loaded first (so a missing alias stops the run before anything is written),
-    then the schedule, then `build_race_features` with the guard: a race that already has predictions of the
-    champion's version stops right after the race exists, writing nothing more. The features are upserted into
-    `feature_values` only after every entry has a prediction; then one `prediction_runs` row and one `predictions`
-    row per entry are inserted, with `generated_at` and `is_late` taken from the same `now`. If the `predictions`
-    insert fails after the run, the leftover run is harmless: the guard reads `predictions`, so a rerun works.
-    Every failure is a `PredictionError`; Supabase errors are reported by type only.
+    The models are loaded first (so a missing champion alias stops the run before anything is written), then the
+    schedule, then `build_race_features` with the guard `_plan`: the models that already predicted the race, and a
+    challenger whose cutoff is not before the race, write nothing; if no model writes, the run stops right after the
+    race exists with nothing more written. The features are upserted into `feature_values` once, after the first
+    model to write has every entry predicted; then each model gets one `prediction_runs` row and one `predictions`
+    row per entry, the champion first, with `generated_at` and `is_late` taken from the same `now`. A champion that
+    cannot predict stops everything. A challenger that cannot (it did not load, predicts NaN, or Supabase fails on
+    it) leaves the champion's rows in place and raises `ChallengerFailed` carrying what was written. If an insert
+    fails after its run, the leftover run is harmless: the guard reads `predictions`, so a rerun works. Every failure
+    is a `PredictionError`; Supabase errors are reported by type only.
     """
     run_id = run_id or uuid.uuid4().hex
     label = f"{year} round {round}"
+    plan: dict[str, _Plan] = {}
     try:
         client = client if client is not None else get_client()
         models = models if models is not None else load_models(client, tracking_uri)
-        champion_id = models.champion.model_version_id
         if schedule is None:
             try:
                 schedule = load_schedule(year)
@@ -430,6 +530,11 @@ def predict_race(
                 raise PredictionError(f"the OpenF1 schedule could not be loaded ({type(exc).__name__})") from None
         start = race_start(schedule, year, round)
 
+        def guard(ref: RaceRef) -> None:
+            plan["plan"] = _plan(client, models, ref, year, round)
+            if not plan["plan"].todo:
+                raise _nothing_to_predict(plan["plan"], models, label)
+
         built = build_race_features(
             year,
             round,
@@ -439,9 +544,11 @@ def predict_race(
             loader=loader,
             run_id=run_id,
             sleep=sleep,
-            check=_refuse_if_predicted(client, champion_id, label),
+            check=guard,
         )
-        predicted = predict_entries(models, built.frame)
+        todo, skipped, broken = plan["plan"].todo, plan["plan"].skipped, plan["plan"].broken
+        champion = next((m for m in todo if m.role == "champion"), None)
+        champion_predicted = predict_entries(models, built.frame) if champion else None
 
         catalog = load_catalog()
         upsert_rows(
@@ -453,50 +560,61 @@ def predict_race(
 
         now = now or datetime.now(UTC)
         now = now.replace(tzinfo=UTC) if now.tzinfo is None else now.astimezone(UTC)
-        generated_at = now.isoformat()
-        is_late = now > start.to_pydatetime()
+        meta = {"run_id": run_id, "generated_at": now.isoformat(), "is_late": now > start.to_pydatetime()}
         races = read_table(client, "races", "race_id,year,round")
         race_id = next(r["race_id"] for r in races if (r["year"], r["round"]) == (year, round))
-        run_row = insert_rows(
-            client,
-            "prediction_runs",
-            [
-                {
-                    "race_id": race_id,
-                    "model_version_id": champion_id,
-                    "dag_run_id": run_id,
-                    "generated_at": generated_at,
-                    "is_late": is_late,
-                }
-            ],
-        )[0]
-        rows = [
-            {
-                "prediction_run_id": run_row["prediction_run_id"],
-                "entry_id": built.ref.entry_ids[record["driver"]],
-                "model_version_id": champion_id,
-                "predicted_pace_delta_pct": float(record["predicted_pace_delta_pct"]),
-                "baseline_pace_delta_pct": (
-                    None if pd.isna(record["baseline_pace_delta_pct"]) else float(record["baseline_pace_delta_pct"])
-                ),
-                "generated_at": generated_at,
-            }
-            for record in predicted.to_dict("records")
-        ]
-        insert_rows(client, "predictions", rows)
+
+        outcomes: list[ModelPrediction] = []
+        if champion is not None:
+            run_number, n = _store_predictions(
+                client, champion.version.model_version_id, race_id, built.ref.entry_ids, champion_predicted, **meta
+            )
+            outcomes.append(
+                ModelPrediction("champion", champion.version.model_version_id, "predicted", "", run_number, n)
+            )
+        else:
+            outcomes.append(
+                ModelPrediction("champion", models.champion.model_version_id, "skipped", skipped["champion"], None, 0)
+            )
     except PredictionError:
         raise
     except (StoreError, RuntimeError) as exc:  # the messages of both name the table and the error type only
         raise PredictionError(str(exc)) from None
-    return PredictionResult(
+
+    failures: list[str] = []
+    if "challenger" in broken:
+        failures.append(f"challenger failed: {broken['challenger']}")
+    challenger = next((m for m in todo if m.role == "challenger"), None)
+    if models.challenger is not None and challenger is None and "challenger" in skipped:
+        outcomes.append(
+            ModelPrediction(
+                "challenger", models.challenger.version.model_version_id, "skipped", skipped["challenger"], None, 0
+            )
+        )
+    if challenger is not None:
+        version_id = challenger.version.model_version_id
+        try:
+            predicted = _predict_with(challenger.version, challenger.baseline, built.frame, "the challenger")
+            run_number, n = _store_predictions(client, version_id, race_id, built.ref.entry_ids, predicted, **meta)
+            outcomes.append(ModelPrediction("challenger", version_id, "predicted", "", run_number, n))
+        except (PredictionError, StoreError, RuntimeError) as exc:
+            failures.append(f"challenger (model version {version_id}) failed: {exc}")
+
+    first = outcomes[0]
+    result = PredictionResult(
         year,
         round,
         run_id,
-        run_row["prediction_run_id"],
-        champion_id,
-        len(rows),
-        is_late,
+        first.prediction_run_id,
+        first.model_version_id,
+        first.entries,
+        meta["is_late"],
         start.isoformat(),
         built.ground_truth_filled,
         built.sessions,
+        tuple(outcomes),
     )
+    if failures:
+        stored = " (the champion's predictions were stored)" if champion is not None else ""
+        raise ChallengerFailed("; ".join(failures) + stored, result)
+    return result
