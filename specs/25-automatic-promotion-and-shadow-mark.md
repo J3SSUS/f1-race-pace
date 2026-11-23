@@ -1,6 +1,6 @@
 # SPEC 25 — Automatic promotion and the shadow mark
 
-> **Status:** Approved
+> **Status:** Implemented
 > **Depends on:** SPEC 10 (selection, first champion, `scripts/promote.py`), SPEC 15 (walk-forward metrics), SPEC 23 (the refit), SPEC 24 (the challenger and its predictions)
 > **Backlog:** Phase 9 of `docs/backlog.md`: "Promotion script (local)" (the automatic rule and `promoted_by = auto`) and "Shadow mark" (SPEC 25)
 > **Date:** 2026-11-22
@@ -103,28 +103,28 @@ Each step leaves the repo green (`uv run pytest`, `ruff`).
 ## Acceptance criteria
 
 *Shared promotion*
-- [ ] `uv run python scripts/promote.py 4` still works as before: on the current champion it changes nothing (`changed = False`).
-- [ ] A promotion marks the outgoing champion `is_shadow = true` and sets every other version to `false`; after any promotion at most one `model_versions` row has `is_shadow = true`.
-- [ ] The first champion (no outgoing one) marks nothing.
-- [ ] Manual and automatic promotions both mark the shadow, and `champion_history.promoted_by` is `manual` or `auto` accordingly.
-- [ ] An automatic promotion needs no test metrics and stores the forward improvement in `test_mae_improvement_pct`; a manual one without test metrics is still refused.
-- [ ] Promoting the version that holds the `challenger` alias removes that alias; a promotion of a version that does not hold it leaves the alias where it is.
-- [ ] A call after a failure between the alias and the mark completes the missing writes without a second alias change.
-- [ ] The champion never has `is_shadow = true`.
+- [x] `uv run python scripts/promote.py 4` still works as before: on the current champion it changes nothing (`changed = False`).
+- [x] A promotion marks the outgoing champion `is_shadow = true` and sets every other version to `false`; after any promotion at most one `model_versions` row has `is_shadow = true`.
+- [x] The first champion (no outgoing one) marks nothing.
+- [x] Manual and automatic promotions both mark the shadow, and `champion_history.promoted_by` is `manual` or `auto` accordingly.
+- [x] An automatic promotion needs no test metrics and stores the forward improvement in `test_mae_improvement_pct`; a manual one without test metrics is still refused.
+- [x] Promoting the version that holds the `challenger` alias removes that alias; a promotion of a version that does not hold it leaves the alias where it is.
+- [x] A call after a failure between the alias and the mark completes the missing writes without a second alias change.
+- [x] The champion never has `is_shadow = true`.
 
 *The rule*
-- [ ] With fewer than 5 common races it does not promote and says how many there are.
-- [ ] With 5 common races and a mean MAE of the challenger exactly 0.98 × the champion's, it promotes; just above, it does not.
-- [ ] With a good mean but worse in 3 or more of the last 5 races it does not promote; worse in 2 it does. A tie in a race is not "worse".
-- [ ] Only the last 5 common races (by year and round) count; older ones are ignored.
-- [ ] A version without the `challenger` alias is refused with `STOPPED:`.
-- [ ] "Rule not met" exits with code 0 and prints the reasons with the numbers; an error exits with 1 and `STOPPED:`.
+- [x] With fewer than 5 common races it does not promote and says how many there are.
+- [x] With 5 common races and a mean MAE of the challenger exactly 0.98 × the champion's, it promotes; just above, it does not.
+- [x] With a good mean but worse in 3 or more of the last 5 races it does not promote; worse in 2 it does. A tie in a race is not "worse".
+- [x] Only the last 5 common races (by year and round) count; older ones are ignored.
+- [x] A version without the `challenger` alias is refused with `STOPPED:`.
+- [x] "Rule not met" exits with code 0 and prints the reasons with the numbers; an error exits with 1 and `STOPPED:`.
 
 *CLI and checks*
-- [ ] `--auto <version> --dry-run` prints the verdict and numbers and writes nothing (no alias, no `champion_history`, no `is_shadow`), checked in tests with fakes.
-- [ ] After a promotion the CLI prints the reminder to run `scripts/publish.py` and does not run it.
-- [ ] Real check: `promote.py --auto <refit version> --dry-run` on the real Supabase and MLflow prints a verdict; afterwards the `champion` alias is still on version 4, `champion_history` has the same rows and no `is_shadow` is `true`.
-- [ ] `uv run pytest` and `ruff check` pass; `docs/data_model.md` and `DECISIONS.md` carry the decisions of this spec.
+- [x] `--auto <version> --dry-run` prints the verdict and numbers and writes nothing (no alias, no `champion_history`, no `is_shadow`), checked in tests with fakes.
+- [x] After a promotion the CLI prints the reminder to run `scripts/publish.py` and does not run it.
+- [x] Real check: `promote.py --auto <refit version> --dry-run` on the real Supabase and MLflow prints a verdict; afterwards the `champion` alias is still on version 4, `champion_history` has the same rows and no `is_shadow` is `true`.
+- [x] `uv run pytest` and `ruff check src scripts tests` pass (the repo-wide `ruff check .` only flags the exploratory notebook, which this spec does not touch); `docs/data_model.md` and `DECISIONS.md` carry the decisions of this spec.
 
 ---
 
