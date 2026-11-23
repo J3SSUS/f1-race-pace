@@ -12,8 +12,11 @@ from training.registry import REGISTERED_MODEL, register_version
 CV = {"cv_mae_mean": 0.4, "cv_rmse_mean": 0.5, "cv_r2_mean": 0.1, "cv_pairwise_accuracy_mean": 0.6}
 
 
-def log_version(uri: str, parent: str, supabase, name: str):
-    """A finished run of `name` ("baseline" or a config key) under sampling run `parent`, registered as a version."""
+def log_version(uri: str, parent: str, supabase, name: str, step: str = "training"):
+    """A finished run of `name` ("baseline" or a config key) under sampling run `parent`, registered as a version.
+
+    `step` is the tag of the run; `step = "refit"` makes it look like the run of a refit (SPEC 23).
+    """
     mlflow.set_tracking_uri(uri)
     experiment_id = MlflowClient(uri).get_run(parent).info.experiment_id
     X = synthetic_X()
@@ -22,7 +25,7 @@ def log_version(uri: str, parent: str, supabase, name: str):
     else:
         algorithm = ALGORITHMS[name]
         model = build_pipeline(name, fixed_params(name), "median", 42).fit(X, synthetic_y(X))
-    tags = {"step": "training", "algorithm": algorithm, "sampling_run_id": parent}
+    tags = {"step": step, "algorithm": algorithm, "sampling_run_id": parent}
     with mlflow.start_run(run_name=name, experiment_id=experiment_id, tags=tags) as run:
         mlflow.log_metrics(CV)
         mlflow.sklearn.log_model(model, name="model", serialization_format="cloudpickle")

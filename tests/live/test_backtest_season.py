@@ -7,7 +7,8 @@ import live.backtest as backtest
 from live.backtest import BacktestError, BacktestResult, RaceOutcome, backtest_season
 from live.ground_truth import GroundTruthError
 from live.metrics import MetricsResult
-from live.prediction import PredictionError
+from live.prediction import Models, PredictionError
+from training.explain import Champion
 
 SECRET = "service-key-that-must-not-leak"
 HELD_1_2 = datetime(2024, 3, 12, 12, 0, tzinfo=UTC)  # rounds 1 and 2 are held, round 3 is not
@@ -21,7 +22,7 @@ pytestmark = pytest.mark.usefixtures("season_config")
 def calls(monkeypatch, season_db):
     """Replace the two writers and the metrics with fakes that write what the loop reads and record the order."""
     log: list[tuple] = []
-    models = SimpleNamespace(champion=SimpleNamespace(model_version_id=CHAMPION))
+    models = Models(Champion(CHAMPION, str(CHAMPION), "run", "sampling", "ridge", None), None)
     races = {r["round"]: r["race_id"] for r in season_db.tables["races"]}
 
     def entries_of(round):
@@ -40,7 +41,7 @@ def calls(monkeypatch, season_db):
 
     def metrics(client, *, year, tracking_uri=None):
         log.append(("metrics", year))
-        return MetricsResult(year, "champion", "baseline", 0)
+        return MetricsResult(year, (), 0)
 
     monkeypatch.setattr(backtest, "predict_race", predict_race)
     monkeypatch.setattr(backtest, "write_ground_truth", write_ground_truth)
@@ -75,7 +76,7 @@ def test_only_the_held_races_are_processed_in_order_and_the_rest_are_not_held(ca
 def test_the_metrics_of_the_result_are_those_of_walk_forward_metrics(calls, season_db, season_schedule_frame):
     result = run(season_db, season_schedule_frame)
 
-    assert result.metrics == MetricsResult(2024, "champion", "baseline", 0)
+    assert result.metrics == MetricsResult(2024, (), 0)
 
 
 def test_a_race_already_predicted_is_skipped_and_one_with_ground_truth_is_present(

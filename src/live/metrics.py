@@ -1,7 +1,8 @@
 """The `walk_forward` metrics of a year, recomputed from what Supabase holds about its predictions and ground truth.
 
-`evaluation_frame` only reads. The champion and the baseline are scored on the same rows (valid ground truth with a
-target and a non-null baseline prediction), with `training.metrics.score`, the only implementation of the metrics.
+`evaluation_frame` only reads. Every model version that has predictions in the year is scored on its own rows
+(valid ground truth with a target and a non-null baseline prediction), and so is its baseline, with
+`training.metrics.score`, the only implementation of the metrics.
 """
 
 from dataclasses import dataclass
@@ -13,7 +14,7 @@ from common.supabase_io import get_client, upsert_rows
 from features.store import StoreError, read_table
 from live.prediction import PredictionError, find_baseline
 from training.metrics import score
-from training.registry import METRIC_NAMES, METRICS_KEY, metric_rows
+from training.registry import METRIC_NAMES, METRICS_KEY, REFIT_STEP, metric_rows
 from training.sampling import SAMPLING_TAG, resolve_tracking_uri
 
 SPLIT = "walk_forward"
@@ -103,34 +104,34 @@ def _model_rows(frame: pd.DataFrame, column: str, model_version_id: int, label: 
     return rows
 
 
-def walk_forward_rows(frame: pd.DataFrame, champion_version_id: int, baseline_version_id: int) -> list[dict]:
-    """The `metrics` rows of the champion and the baseline over the rows of `frame` (from `evaluation_frame`).
+def walk_forward_rows(frame: pd.DataFrame, version_id: int, baseline_version_id: int) -> list[dict]:
+    """The `metrics` rows of one model version and its baseline over the rows of `frame` (from `evaluation_frame`).
 
     Each model gets one aggregate set (`race_id` NULL) and one set per race, four `metric_name` values each, with
-    `split = 'walk_forward'` and `segment_type = 'overall'`. The champion is scored on `predicted` and the baseline
-    on `baseline`, both on the same rows (those of the champion's version) and with `training.metrics.score`.
-    Raises `ValueError` when the champion has no rows or no race has two drivers of different actual value.
+    `split = 'walk_forward'` and `segment_type = 'overall'`. The version is scored on `predicted` and the baseline
+    on `baseline`, both on the same rows (those of `version_id`) and with `training.metrics.score`.
+    Raises `ValueError` when the version has no rows or no race has two drivers of different actual value.
     """
-    frame = frame[frame["model_version_id"] == champion_version_id].reset_index(drop=True)
-    return _model_rows(frame, "predicted", champion_version_id, "the champion") + _model_rows(
-        frame, "baseline", baseline_version_id, "the baseline"
+    frame = frame[frame["model_version_id"] == version_id].reset_index(drop=True)
+    return _model_rows(frame, "predicted", version_id, f"model version {version_id}") + _model_rows(
+        frame, "baseline", baseline_version_id, f"the baseline of model version {version_id}"
     )
 
 
 @dataclass(frozen=True)
 class ModelMetrics:
     model_version_id: int
-    algorithm: str  # "ridge" for the champion, "baseline" for the baseline
-    races: int  # races with at least one evaluated row
-    rows: int  # evaluated rows (the same ones for both models)
+    algorithm: str  # "ridge" for a model, "baseline" for a baseline
+    races: int  # races with at least one evaluated row of the version
+    rows: int  # evaluated rows (the same ones for the version and its baseline)
     scores: dict[str, float]  # the aggregate over all evaluated rows: mae, rmse, r2, pairwise_accuracy
+    baseline_of: int | None = None  # for a baseline, the model version it is scored against; None for a model
 
 
 @dataclass(frozen=True)
 class MetricsResult:
     year: int
-    champion: ModelMetrics
-    baseline: ModelMetrics
+    models: tuple[ModelMetrics, ...]  # each model version with predictions, followed by its baseline
     rows_written: int  # metrics rows upserted
 
 
@@ -145,36 +146,49 @@ def _aggregate(rows: list[dict], version_id: int) -> dict[str, float]:
 
 
 def walk_forward_metrics(client=None, *, year: int, tracking_uri: str | None = None) -> MetricsResult:
-    """Recompute and upsert the `walk_forward` metrics of `year` for the champion and the baseline.
+    """Recompute and upsert the `walk_forward` metrics of `year` for every model version with predictions.
 
-    The champion is the one `model_version_id` found in the predictions of the year (`evaluation_frame`); its
-    baseline is found from its sampling run (`model_versions`, then the tag of its MLflow run) with `find_baseline`.
-    Raises `MetricsError`, writing nothing, when no race has both a prediction and a valid ground truth, when the
-    predictions hold more than one version, when the baseline cannot be found or when Supabase or MLflow fail
-    (reported by type). It writes only `metrics`, upserted on `METRICS_KEY`: rerunning duplicates nothing.
+    Each version found in the predictions of the year (`evaluation_frame`) is scored with its own baseline, found
+    from its sampling run (`model_versions`, then the tags of its MLflow run) with `find_baseline` of its own kind:
+    the baseline of a refit for a refit version, the other one otherwise. Raises `MetricsError`, writing nothing,
+    when no race has both a prediction and a valid ground truth, when a version has no `model_versions` row or run
+    tag, when a baseline cannot be found, when two versions would share one baseline (its rows would be scored on
+    two sets of predictions) or when Supabase or MLflow fail (reported by type). It writes only `metrics`, upserted
+    on `METRICS_KEY`: rerunning duplicates nothing.
     """
     try:
         client = client if client is not None else get_client()
         frame = evaluation_frame(client, year)
         if frame.empty:
             raise MetricsError(f"no race of {year} has both a prediction and a valid ground truth")
-        versions = sorted(frame["model_version_id"].unique().tolist())
-        if len(versions) > 1:
-            raise MetricsError(
-                f"the predictions of {year} hold several model versions ({', '.join(map(str, versions))}): "
-                "scoring more than one champion is not supported yet"
-            )
-        champion_id = int(versions[0])
+        versions = sorted(int(v) for v in frame["model_version_id"].unique())
         ml = MlflowClient(resolve_tracking_uri(tracking_uri))
         model_versions = read_table(client, "model_versions", "model_version_id,mlflow_run_id,algorithm")
-        champion = next((r for r in model_versions if r["model_version_id"] == champion_id), None)
-        if champion is None:
-            raise MetricsError(f"model version {champion_id} has no model_versions row")
-        sampling_run_id = ml.get_run(champion["mlflow_run_id"]).data.tags.get(SAMPLING_TAG, "")
-        if not sampling_run_id:
-            raise MetricsError(f"the run of model version {champion_id} has no {SAMPLING_TAG} tag")
-        baseline = find_baseline(client, ml, sampling_run_id, rows=model_versions)
-        rows = walk_forward_rows(frame, champion_id, baseline["model_version_id"])
+        by_id = {r["model_version_id"]: r for r in model_versions}
+        pairs: list[tuple[dict, dict]] = []
+        for version_id in versions:
+            version = by_id.get(version_id)
+            if version is None:
+                raise MetricsError(f"model version {version_id} has no model_versions row")
+            tags = ml.get_run(version["mlflow_run_id"]).data.tags
+            sampling_run_id = tags.get(SAMPLING_TAG, "")
+            if not sampling_run_id:
+                raise MetricsError(f"the run of model version {version_id} has no {SAMPLING_TAG} tag")
+            baseline = find_baseline(
+                client, ml, sampling_run_id, rows=model_versions, refit=tags.get("step") == REFIT_STEP
+            )
+            shared = next((v for v, b in pairs if b["model_version_id"] == baseline["model_version_id"]), None)
+            if shared is not None:
+                raise MetricsError(
+                    f"model versions {shared['model_version_id']} and {version_id} share the baseline "
+                    f"{baseline['model_version_id']}: it cannot be scored on two sets of predictions"
+                )
+            pairs.append((version, baseline))
+        rows = [
+            row
+            for version, baseline in pairs
+            for row in walk_forward_rows(frame, version["model_version_id"], baseline["model_version_id"])
+        ]
         stored = upsert_rows(client, "metrics", rows, METRICS_KEY)
     except MetricsError:
         raise
@@ -188,12 +202,13 @@ def walk_forward_metrics(client=None, *, year: int, tracking_uri: str | None = N
     except Exception as exc:  # MLflow or Supabase down: the type only, never a body
         raise MetricsError(f"the metrics of {year} could not be computed ({type(exc).__name__})") from None
 
-    races, n = int(frame["race_id"].nunique()), len(frame)
-    return MetricsResult(
-        year,
-        ModelMetrics(champion_id, champion["algorithm"], races, n, _aggregate(rows, champion_id)),
-        ModelMetrics(
-            int(baseline["model_version_id"]), "baseline", races, n, _aggregate(rows, baseline["model_version_id"])
-        ),
-        len(stored),
-    )
+    models: list[ModelMetrics] = []
+    for version, baseline in pairs:
+        mine = frame[frame["model_version_id"] == version["model_version_id"]]
+        races, n = int(mine["race_id"].nunique()), len(mine)
+        version_id, baseline_id = version["model_version_id"], baseline["model_version_id"]
+        models.append(ModelMetrics(version_id, version["algorithm"], races, n, _aggregate(rows, version_id)))
+        models.append(
+            ModelMetrics(baseline_id, "baseline", races, n, _aggregate(rows, baseline_id), baseline_of=version_id)
+        )
+    return MetricsResult(year, tuple(models), len(stored))

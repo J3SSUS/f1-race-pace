@@ -178,6 +178,8 @@ def register_version(name: str, mlflow_run_id: str, client, tracking_uri: str | 
 
 
 REFIT_STEP = "refit"  # the `step` tag of the run of a refit (SPEC 23)
+CHAMPION_ALIAS = "champion"  # set only by `scripts/promote.py`
+CHALLENGER_ALIAS = "challenger"  # set by `scripts/refit.py` on the refit candidate (SPEC 24); at most one version
 
 
 def register_refit(name: str, mlflow_run_id: str, client, tracking_uri: str | None = None) -> Version:

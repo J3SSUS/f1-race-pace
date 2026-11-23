@@ -4,7 +4,7 @@ import pytest
 from live.metrics import FRAME_COLUMNS, SPLIT, walk_forward_rows
 from training.metrics import score
 
-CHAMPION, BASELINE = 4, 3
+CHAMPION, BASELINE = 4, 3  # `CHAMPION` is just the version being scored
 
 
 def make_frame(races: dict[int, list[tuple[float, float, float]]]) -> pd.DataFrame:

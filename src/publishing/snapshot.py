@@ -47,20 +47,35 @@ def find_champion(champion_history: list[dict], model_versions: list[dict]) -> d
     return {"model_version_id": version_id, "algorithm": version["algorithm"], "promoted_at": current[0]["promoted_at"]}
 
 
-def find_baseline(model_versions: list[dict], metrics: list[dict]) -> dict:
-    """The newest `baseline` version that has walk-forward metrics (as `find_baseline` does in SPEC 14)."""
+def _metric_races(metrics: list[dict], version_id: int) -> set:
+    """The races (`race_id`) with metric rows of a version; the aggregate rows have no race."""
+    return {row["race_id"] for row in metrics if row["model_version_id"] == version_id and row["race_id"] is not None}
+
+
+def find_baseline(model_versions: list[dict], metrics: list[dict], champion_version_id: int) -> dict:
+    """The baseline of the champion: the `baseline` version whose walk-forward metrics cover the champion's races.
+
+    Every version is scored with its baseline on the same rows (SPEC 24), so the baseline of the champion has metrics
+    over exactly the races of the champion's. A baseline scored on other races (the one of a challenger that predicted
+    only the latest ones) is not it. The newest of the versions that match wins. Raises `ValueError` if no baseline has
+    metrics, or if none was scored on the champion's races.
+    """
     scored = {row["model_version_id"] for row in metrics}
     candidates = [r for r in model_versions if r["algorithm"] == "baseline" and r["model_version_id"] in scored]
     if not candidates:
         raise ValueError("model_versions: no baseline version has walk_forward metrics")
-    newest = max(candidates, key=lambda row: row["model_version_id"])
+    races = _metric_races(metrics, champion_version_id)
+    matching = [r for r in candidates if _metric_races(metrics, r["model_version_id"]) == races]
+    if not matching:
+        raise ValueError("model_versions: no baseline version has walk_forward metrics on the champion's races")
+    newest = max(matching, key=lambda row: row["model_version_id"])
     return {"model_version_id": newest["model_version_id"], "algorithm": "baseline"}
 
 
 def normalize(rows: dict) -> dict:
     """The five parts of the snapshot: the champion, the baseline, the races, only their metrics and the results."""
     champion = find_champion(rows["championHistory"], rows["modelVersions"])
-    baseline = find_baseline(rows["modelVersions"], rows["metrics"])
+    baseline = find_baseline(rows["modelVersions"], rows["metrics"], champion["model_version_id"])
     scored = {champion["model_version_id"], baseline["model_version_id"]}
     results = [dict(row) for row in rows["results"]]
     if not results:

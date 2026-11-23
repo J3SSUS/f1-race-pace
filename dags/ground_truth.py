@@ -1,8 +1,12 @@
 """Store what actually happened in one race, on demand: `resolve_race` picks the race, `ground_truth` writes it.
 
 Params `year` and `round` are both optional; with neither, the race is the last one held. The first task prints the race
-as JSON to the pod's XCom file and the second takes `year` and `round` from it. No automatic retries: a `STOPPED:`
-shows as a failed task, and the user triggers the DAG again (30 minutes after a session ends, if it was live).
+as JSON to the pod's XCom file and the second takes `year` and `round` from it. The third, `metrics` (SPEC 24),
+recomputes the `walk_forward` metrics of that year for every model version with predictions, so the champion and the
+challenger are scored after each race; it runs in the `ml` image because it finds the baselines through MLflow, which
+the `data` image of the ground truth does not have. A failure of `metrics` leaves the ground truth stored. No automatic
+retries: a `STOPPED:` shows as a failed task, and the user triggers the DAG again (30 minutes after a session ends, if
+it was live).
 """
 
 from __future__ import annotations
@@ -58,4 +62,14 @@ with DAG(
         ],
         **pod_kwargs("data"),
     )
-    resolve_race >> ground_truth
+    metrics = KubernetesPodOperator(
+        task_id="metrics",
+        name="metrics",
+        arguments=[
+            "scripts/walk_forward_metrics.py",
+            "--year",
+            "{{ ti.xcom_pull(task_ids='resolve_race')['year'] }}",
+        ],
+        **pod_kwargs("ml"),
+    )
+    resolve_race >> ground_truth >> metrics

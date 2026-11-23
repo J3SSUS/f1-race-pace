@@ -151,7 +151,7 @@ The DAG `smoke_pod` (trigger it from the UI) launches one pod of each image and 
 | After the race (about 30 minutes after it ends) | Trigger `ground_truth` | leave `year` and `round` empty: it resolves the last race held |
 | Then | `uv run python scripts/publish.py` by hand | |
 
-Both DAGs have two tasks: `resolve_race` (pod of the `data` image running `scripts/next_race.py`, which prints the race as JSON) and the step itself, which takes `year` and `round` from it. To run for another race, give **both** `year` and `round`; one alone fails in `resolve_race`. Both DAGs have no retries: a failed task with a `STOPPED:` line in its log means something has to change first. A live OpenF1 session blocks the schedule too (trigger again 30 minutes after it ends), and a race already predicted stops `prediction` on purpose (a prediction is never replaced).
+Both DAGs start with `resolve_race` (pod of the `data` image running `scripts/next_race.py`, which prints the race as JSON) and then the step itself, which takes `year` and `round` from it. `ground_truth` has a third task, `metrics` (the `ml` image, `scripts/walk_forward_metrics.py`), that recomputes the `walk_forward` metrics of that year for every model version with predictions; if it fails the ground truth is already stored. To run for another race, give **both** `year` and `round`; one alone fails in `resolve_race`. Both DAGs have no retries: a failed task with a `STOPPED:` line in its log means something has to change first. A live OpenF1 session blocks the schedule too (trigger again 30 minutes after it ends). `prediction` predicts with the champion and, if there is one, the challenger (below); a model that already predicted the race is skipped, and the DAG stops on purpose only when no model has anything to write (a prediction is never replaced).
 
 `next` is the first race of the year whose race session has not started, so after the lights go out on Sunday `prediction` points to the following round. To predict a race that already started, trigger it with its `year` and `round`; the prediction is stored as late (`is_late`).
 
@@ -170,7 +170,7 @@ k8s/run-step.sh data scripts/next_race.py --which next --year 2026 --round 20   
 | To try one or two models | Trigger `training` | `models` = comma-separated config keys, e.g. `ridge,elasticnet`: it samples, trains only those and skips `evaluate` (about 5 minutes for those two) |
 | New races, or a new configuration worth the test | Trigger `training` | `models` empty: the six models in series and then `evaluate` (about 18 minutes) |
 | A retraining as of a race (walk-forward) | Trigger `training` | `cutoff` = `YYYY-R`, e.g. `2026-10` (the races through that round); empty uses the range of `config/training.json`. Combine with `models` to check it quickly |
-| A retraining whose newest races must enter the model | Trigger `training` | `cutoff` = `YYYY-R`, `models` empty and `refit` on: the full training with the cutoff, and then `refit` trains the candidate and the baseline again on **every** race up to the cutoff (about 18 minutes for the training, plus the refit) |
+| A retraining whose newest races must enter the model | Trigger `training` | `cutoff` = `YYYY-R`, `models` empty and `refit` on: the full training with the cutoff, and then `refit` trains the candidate and the baseline again on **every** race up to the cutoff (about 18 minutes for the training, plus the refit); the refit candidate becomes the **challenger** (below) |
 | The candidate is worth it | `uv run python scripts/promote.py <model_version_id>` by hand | the version of `f1-race-pace` that `evaluate` picked (MLflow UI); needs the MLflow port-forward above |
 | After promoting | Trigger `explain_champion`, then `k8s/fetch-outputs.sh` | no params |
 | Then | Review `git diff` and commit `site/charts/` and `MODEL_CARD.md` by hand | |
@@ -185,13 +185,38 @@ The `cutoff` is `YYYY-R` (year and round, e.g. `2026-10`) and it is checked twic
 
 - Two MLflow runs, `refit-<candidate>` and `refit-baseline`, tagged `step = refit` and `refit_of` (the run each was cloned from), and two new versions of `f1-race-pace` with a `model_versions` row each, whose `trained_through_race_id` is the cutoff race. They are told apart from the versions that `train` makes by that tag and that race, since the table has no flag.
 - No `metrics` rows: any number on rows the model trained on would mislead. Their evaluation is the forward one, on races after the cutoff that no compared model saw (SPEC 24), never the test of a sampling run.
-- Nothing promotes. The `champion` alias and `champion_history` change only with `scripts/promote.py`.
+- Nothing promotes. The `champion` alias and `champion_history` change only with `scripts/promote.py`. The one alias a refit sets is `challenger`, on the candidate (below).
 
 The test is a gate: `refit` stops with `STOPPED:`, writes nothing and exits 1 if the sampling run has no cutoff, if there is no finished `evaluate` run (the test is used once to report and only then becomes training data), or if the candidate's test MAE is not lower than the baseline's. A stopped refit is a result, not a failure of the DAG: the recipe did not beat the baseline on the most recent races. It is safe to run again: a finished refit of the same sampling run is reused. To run it by hand on a sampling run already evaluated:
 
 ```
 k8s/run-step.sh ml scripts/refit.py <sampling_run_id>
 ```
+
+**The challenger** (SPEC 24). The life of a model is: the champion predicts; a retraining with `refit` leaves a refit candidate; `refit` gives it the MLflow alias `challenger`; from then on the `prediction` DAG predicts every race with both, each under its own `model_version_id`; when the challenger is promoted only the champion predicts. There is one challenger at a time: a new refit moves the alias, and the old version keeps its predictions and metrics but stops predicting. The shadow (`is_shadow`) is only a mark in the registry and never predicts. The page shows only the champion.
+
+- The challenger predicts only the races **after** its cutoff (`trained_through_race_id`), because it trained on the earlier ones; for the others the line says `skipped (race at or before its cutoff)`. "Already predicted" is asked per model, so a challenger set after a race was predicted catches up with the backtest below.
+- The champion is stored first. If the challenger cannot predict (another feature set, no baseline of its kind, a NaN), the champion stays stored and the task fails with `STOPPED: challenger ... failed: ...`; trigger the DAG again once it is fixed and only what is missing is written.
+- Each version is scored in `metrics` (`split = 'walk_forward'`) with its own baseline: a refit version with the baseline of its refit, any other with the baseline of its sampling run. The DAG `ground_truth` does it after each race; by hand: `k8s/run-step.sh ml scripts/walk_forward_metrics.py --year 2026`.
+
+To look at it: the MLflow UI (`f1-race-pace`, aliases `champion` and `challenger`), or in Supabase:
+
+```
+select year, round, driver, model_version_id, predicted_pace_delta_pct, actual_pace_delta_pct, abs_error
+from prediction_results where year = 2026 and round = 20 order by driver, model_version_id;
+
+select model_version_id, race_id, metric_name, value from metrics
+where split = 'walk_forward' and race_id is null order by model_version_id, metric_name;
+```
+
+By hand, in this order (the `ml` image must have this code, see the rule below):
+
+```
+k8s/run-step.sh ml scripts/refit.py <sampling_run_id>     # on a refit already made: sets the alias `challenger` (prints `(reused)`)
+k8s/run-step.sh ml scripts/backtest.py --year 2026         # predicts the races after the challenger's cutoff and recomputes the metrics
+```
+
+`prediction_results` is public, so the challenger's rows are readable with the anon key; the page ignores them. Before publishing after a change in `docs/site/site.js`, rebuild `site/` (`uv run python scripts/build_site.py`, or `scripts/publish.py`): GitHub Pages serves the committed `site/`.
 
 After changing a script in `src/` or `scripts/` (or `docs/model_card_notes.md`, which the `ml` image bakes in), rebuild the `ml` image, load it again with `kind load docker-image f1-pipeline-ml:0.1.0 --name f1` and run `docker image prune`; the pods keep running the old image otherwise.
 
