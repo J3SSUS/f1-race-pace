@@ -300,3 +300,129 @@ def test_promoting_the_current_champion_with_a_complete_mark_changes_nothing(cli
     result = promote(cli, uri, supabase, second.model_version_id)
     assert result["changed"] is False and result["shadow_set"] == first.model_version_id
     assert (supabase.writes, supabase.tables["model_versions"]) == before
+
+
+# ---- auto_promote (SPEC 25) ----
+
+RACES = [{"race_id": 100 + i, "year": 2024, "round": i + 1} for i in range(8)]
+
+
+def add_walk_forward(supabase, version_id, maes: dict[int, float]):
+    supabase.tables["metrics"].extend(
+        {
+            "model_version_id": version_id,
+            "race_id": race_id,
+            "split": "walk_forward",
+            "segment_type": "overall",
+            "segment_value": None,
+            "metric_name": "mae",
+            "value": value,
+        }
+        for race_id, value in maes.items()
+    )
+
+
+@pytest.fixture
+def duel(cli, uri, supabase, three):
+    """Version 1 is the champion and version 2 the challenger, both with `walk_forward` MAE on the races 103 to 107.
+
+    The challenger has no test metrics, like a refit (SPEC 23).
+    """
+    champion, challenger, other = three
+    supabase.tables["races"] = RACES
+    supabase.tables["metrics"] = [
+        r
+        for r in supabase.tables["metrics"]
+        if not (r["split"] == "test" and r["model_version_id"] == challenger.model_version_id)
+    ]
+    promote(cli, uri, supabase, champion.model_version_id)
+    set_challenger(uri, challenger)
+    add_walk_forward(supabase, champion.model_version_id, {100 + i: 1.0 for i in range(3, 8)})
+    add_walk_forward(supabase, challenger.model_version_id, {100 + i: 0.5 for i in range(3, 8)})
+    return champion, challenger, other
+
+
+def auto(cli, uri, supabase, version_id, dry_run=False):
+    return promotion.auto_promote(version_id, client=supabase, tracking_uri=uri, dry_run=dry_run)
+
+
+def test_the_challenger_that_passes_is_promoted_with_the_forward_improvement(cli, uri, supabase, duel):
+    champion, challenger, _ = duel
+    result = auto(cli, uri, supabase, challenger.model_version_id)
+    assert result["promoted"] is True and result["passes"] is True and result["common_races"] == 5
+    assert alias(uri) == challenger.mlflow_version and challenger_alias(uri) is None
+    (row,) = current(supabase)
+    assert row["model_version_id"] == challenger.model_version_id and row["promoted_by"] == "auto"
+    assert row["test_mae_improvement_pct"] == pytest.approx(50.0)  # (1.0 - 0.5) / 1.0, forward, no test metrics
+    assert shadows(supabase) == [champion.model_version_id]
+    assert result["test_mae"] is None and result["shadow_set"] == champion.model_version_id
+
+
+def test_a_challenger_without_five_common_races_is_not_promoted_and_nothing_is_written(cli, uri, supabase, duel):
+    champion, challenger, _ = duel
+    supabase.tables["metrics"] = [
+        r for r in supabase.tables["metrics"] if not (r["split"] == "walk_forward" and r["race_id"] == 107)
+    ]
+    before = (list(supabase.writes), [dict(r) for r in supabase.tables["champion_history"]])
+    result = auto(cli, uri, supabase, challenger.model_version_id)
+    assert result["promoted"] is False and result["common_races"] == 4 and "only 4 common races" in result["reason"]
+    assert (supabase.writes, supabase.tables["champion_history"]) == before
+    assert alias(uri) == champion.mlflow_version and challenger_alias(uri) == challenger.mlflow_version
+
+
+def test_a_challenger_that_is_worse_in_three_races_is_not_promoted(cli, uri, supabase, duel):
+    champion, challenger, _ = duel
+    for row in supabase.tables["metrics"]:
+        if row["model_version_id"] == challenger.model_version_id and row["race_id"] in (103, 104, 105):
+            row["value"] = 1.2
+    before = list(supabase.writes)
+    result = auto(cli, uri, supabase, challenger.model_version_id)
+    assert result["promoted"] is False and result["races_worse"] == 3 and "worse than the champion" in result["reason"]
+    assert supabase.writes == before and alias(uri) == champion.mlflow_version
+
+
+def test_a_dry_run_that_passes_writes_nothing(cli, uri, supabase, duel):
+    champion, challenger, _ = duel
+    before = (list(supabase.writes), [dict(r) for r in supabase.tables["champion_history"]])
+    result = auto(cli, uri, supabase, challenger.model_version_id, dry_run=True)
+    assert result["passes"] is True and result["promoted"] is False and result["dry_run"] is True
+    assert "dry run" in result["reason"] and result["improvement_pct"] == pytest.approx(50.0)
+    assert (supabase.writes, supabase.tables["champion_history"]) == before
+    assert alias(uri) == champion.mlflow_version and challenger_alias(uri) == challenger.mlflow_version
+    assert shadows(supabase) == []
+
+
+def test_a_version_without_the_challenger_alias_is_refused_before_writing(cli, uri, supabase, duel):
+    _, _, other = duel
+    add_walk_forward(supabase, other.model_version_id, {100 + i: 0.5 for i in range(3, 8)})
+    before = list(supabase.writes)
+    with pytest.raises(ValueError, match="does not hold the `challenger` alias"):
+        auto(cli, uri, supabase, other.model_version_id)
+    assert supabase.writes == before
+
+
+def test_the_champion_cannot_be_promoted_again_automatically(cli, uri, supabase, duel):
+    champion, _, _ = duel
+    set_challenger(uri, champion)
+    with pytest.raises(ValueError, match="already the champion"):
+        auto(cli, uri, supabase, champion.model_version_id)
+
+
+def test_an_unknown_version_is_refused(cli, uri, supabase, duel):
+    with pytest.raises(ValueError, match="does not exist"):
+        auto(cli, uri, supabase, 999)
+
+
+def test_without_a_current_champion_it_is_refused(cli, uri, supabase, duel):
+    _, challenger, _ = duel
+    supabase.tables["champion_history"] = []
+    with pytest.raises(ValueError, match="expected one current champion, found 0"):
+        auto(cli, uri, supabase, challenger.model_version_id)
+
+
+def test_a_manual_promotion_still_needs_test_metrics_and_refuses_a_given_improvement(cli, uri, supabase, duel):
+    _, challenger, third = duel
+    with pytest.raises(ValueError, match="no test metrics"):
+        promote(cli, uri, supabase, challenger.model_version_id)  # the challenger has none: only auto skips them
+    with pytest.raises(ValueError, match="only given by an automatic promotion"):
+        cli.promote(third.model_version_id, "manual", client=supabase, tracking_uri=uri, improvement_pct=10.0)

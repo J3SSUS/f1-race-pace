@@ -21,7 +21,7 @@
 *The automatic rule* (`auto_promote(challenger_version_id)` in the same module)
 - Compares the challenger and the current champion on `walk_forward` MAE per race (the `race_id` rows SPEC 24 writes), only on races both predicted.
 - Promotes only if there are at least 5 common races, and on the last 5 of them the challenger's mean MAE is at most 0.98 × the champion's and it is not worse in at least 3 of the 5. Otherwise it changes nothing and says why (fewer than 5 common races, mean not good enough, or worse in 3 or more races), with the numbers.
-- If it promotes, it calls the shared function with `promoted_by = auto` and writes the improvement in `test_mae_improvement_pct` as today.
+- If it promotes, it calls the shared function with `promoted_by = auto` and the forward improvement over the window, `(champion_mean - challenger_mean) / champion_mean * 100`, which is stored in `champion_history.test_mae_improvement_pct`. A challenger is a refit and has no test metrics (SPEC 23), so in an automatic promotion the shared function does not read or require them; a manual promotion still does.
 - It refuses a version that does not hold the `challenger` alias (SPEC 24).
 
 *The CLI*
@@ -49,7 +49,7 @@ No new table, column or migration. `model_versions.is_shadow` (boolean, default 
 
 | Table / registry | Written by | What |
 | --- | --- | --- |
-| `champion_history` | shared promotion | Same as today: the current row gets `demoted_at`, a new row gets `model_version_id`, `promoted_by` (`manual` or `auto`) and `test_mae_improvement_pct`. |
+| `champion_history` | shared promotion | The current row gets `demoted_at`, a new row gets `model_version_id`, `promoted_by` (`manual` or `auto`) and `test_mae_improvement_pct`: the test MAE improvement over the baseline for `manual`, the forward improvement over the 5 races of the rule for `auto`. |
 | `model_versions.is_shadow` | shared promotion | `true` on the outgoing champion, `false` on any other version that had it. At most one row `true`. |
 | MLflow alias `champion` | shared promotion | Set on the promoted version, as today. |
 | MLflow alias `challenger` | shared promotion | Removed if it is on the promoted version. Left alone if it is on another version. |
@@ -69,7 +69,9 @@ A race where the challenger's MAE equals the champion's is not "worse".
 **Function contracts**
 
 ```python
-promote(model_version_id, promoted_by, client=None, tracking_uri=None) -> dict
+promote(model_version_id, promoted_by, client=None, tracking_uri=None, improvement_pct=None) -> dict
+    # improvement_pct: only for promoted_by = auto (the forward improvement); then no test metrics are needed
+    # and test_mae / baseline_test_mae are None in the result
     # keys as today (model_version_id, mlflow_version, test_mae, baseline_test_mae, improvement_pct,
     # changed, alias_set, demoted) plus:
     #   shadow_set: int | None        model_version_id marked is_shadow = true (None for the first champion)
@@ -105,6 +107,7 @@ Each step leaves the repo green (`uv run pytest`, `ruff`).
 - [ ] A promotion marks the outgoing champion `is_shadow = true` and sets every other version to `false`; after any promotion at most one `model_versions` row has `is_shadow = true`.
 - [ ] The first champion (no outgoing one) marks nothing.
 - [ ] Manual and automatic promotions both mark the shadow, and `champion_history.promoted_by` is `manual` or `auto` accordingly.
+- [ ] An automatic promotion needs no test metrics and stores the forward improvement in `test_mae_improvement_pct`; a manual one without test metrics is still refused.
 - [ ] Promoting the version that holds the `challenger` alias removes that alias; a promotion of a version that does not hold it leaves the alias where it is.
 - [ ] A call after a failure between the alias and the mark completes the missing writes without a second alias change.
 - [ ] The champion never has `is_shadow = true`.
