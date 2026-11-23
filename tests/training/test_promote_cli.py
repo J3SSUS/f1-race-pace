@@ -426,3 +426,40 @@ def test_a_manual_promotion_still_needs_test_metrics_and_refuses_a_given_improve
         promote(cli, uri, supabase, challenger.model_version_id)  # the challenger has none: only auto skips them
     with pytest.raises(ValueError, match="only given by an automatic promotion"):
         cli.promote(third.model_version_id, "manual", client=supabase, tracking_uri=uri, improvement_pct=10.0)
+
+
+def main_auto(cli, uri, supabase, version_id, *flags):
+    lines: list[str] = []
+    code = cli.main(
+        ["--auto", str(version_id), *flags],
+        auto_promoter=partial(cli.auto_promote, client=supabase, tracking_uri=uri),
+        out=lines.append,
+    )
+    return code, lines
+
+
+def test_the_cli_dry_run_writes_nothing_even_when_the_rule_passes(cli, uri, supabase, duel):
+    champion, challenger, _ = duel
+    before = (list(supabase.writes), [dict(r) for r in supabase.tables["champion_history"]])
+    code, lines = main_auto(cli, uri, supabase, challenger.model_version_id, "--dry-run")
+    assert code == 0 and lines[-1].startswith("dry run: the rule is met") and cli.PUBLISH_REMINDER not in lines
+    assert (supabase.writes, supabase.tables["champion_history"]) == before
+    assert alias(uri) == champion.mlflow_version and shadows(supabase) == []
+
+
+def test_the_cli_auto_promotes_and_reminds_to_publish(cli, uri, supabase, duel):
+    champion, challenger, _ = duel
+    code, lines = main_auto(cli, uri, supabase, challenger.model_version_id)
+    assert code == 0 and lines[-1] == cli.PUBLISH_REMINDER
+    assert alias(uri) == challenger.mlflow_version and shadows(supabase) == [champion.model_version_id]
+
+
+def test_the_cli_exits_0_when_the_rule_is_not_met_and_1_on_an_error(cli, uri, supabase, duel):
+    champion, challenger, other = duel
+    supabase.tables["metrics"] = [
+        r for r in supabase.tables["metrics"] if r["model_version_id"] != champion.model_version_id
+    ]
+    code, lines = main_auto(cli, uri, supabase, challenger.model_version_id)
+    assert code == 0 and lines[-1].startswith("not promoted: only 0 common races")
+    code, lines = main_auto(cli, uri, supabase, other.model_version_id)  # it does not hold the challenger alias
+    assert code == 1 and lines[0].startswith("STOPPED: model version") and "`challenger` alias" in lines[0]
