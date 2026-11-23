@@ -35,7 +35,7 @@ To regenerate: `dot -Tsvg diagrams/erd.dot -o diagrams/erd.svg`.
 | `feature_set_items` | `(feature_set_id, feature_id)` | Which features belong to a set and in what `position`, so the wide matrix is rebuilt in the order the model expects. |
 | `feature_values` | `(entry_id, feature_id, feature_set_id)` | The values. `value_num` holds numbers and flags (0/1), `value_text` holds categories such as `circuit_type`. A missing value (for example FP2 on a sprint weekend) is stored as NULL or simply no row; imputation stays inside each model's pipeline, as the contract says. |
 
-Why `feature_set_id` on the value and not `model_version_id`: the baseline, the 6 models and the shadow model train on the same features, so values are computed once and shared. A new model version only needs a different `feature_set_id` when the feature list actually changes. The cost is that a feature recomputed with different logic needs a new feature set version too (the `schema_hash` and `computed_at` help detect that).
+Why `feature_set_id` on the value and not `model_version_id`: the baseline, the 6 models and every retrained version train on the same features, so values are computed once and shared. A new model version only needs a different `feature_set_id` when the feature list actually changes. The cost is that a feature recomputed with different logic needs a new feature set version too (the `schema_hash` and `computed_at` help detect that).
 
 Write rule: `feature_values` is written with an upsert on `(entry_id, feature_id, feature_set_id)`, so rerunning preprocess is idempotent. Changing the logic of a feature means a new feature set version (`v2`) with a new `schema_hash`, never an overwrite of `v1`.
 
@@ -45,8 +45,8 @@ Typed columns (`value_num`/`value_text`) avoid casting everything to text. The t
 
 | Table | Key | Purpose |
 | --- | --- | --- |
-| `model_versions` | `model_version_id` | One trained model: MLflow run, algorithm (baseline, ridge, elasticnet, rf, xgb, lgbm, catboost), `feature_set_id`, `trained_through_race_id` (walk-forward cutoff: only races before it were used) and `is_shadow` for the model without 2026. |
-| `champion_history` | `champion_id` | Every promotion of the `champion` alias with `promoted_at`, `demoted_at`, `promoted_by` (`manual` for the first champion, `auto` after a retraining) and the test MAE improvement that justified it (rule for `auto`: at least 2%, sustained over the last 5 races). The current champion is the row with `demoted_at IS NULL`. |
+| `model_versions` | `model_version_id` | One trained model: MLflow run, algorithm (baseline, ridge, elasticnet, rf, xgb, lgbm, catboost), `feature_set_id`, `trained_through_race_id` (walk-forward cutoff: only races before it were used) and `is_shadow`, the mark of the shadow: the champion that the last promotion replaced, that is, the model without the newest data (version 4, the model without 2026, until the first retrained champion). A promotion sets it on the outgoing champion and clears it everywhere else, so at most one version is the shadow; the first champion marks nothing. It is a mark only: the shadow does not predict. |
+| `champion_history` | `champion_id` | Every promotion of the `champion` alias with `promoted_at`, `demoted_at`, `promoted_by` (`manual` or `auto`; `auto` is the rule of `scripts/promote.py --auto`, `manual` a promotion by hand, the first champion included) and `test_mae_improvement_pct`, the improvement that justified it: for `manual`, the test MAE improvement over the baseline of the same sampling run; for `auto`, the forward improvement `(champion_mean - challenger_mean) / champion_mean × 100` of the walk-forward MAE over the last 5 races both predicted (a challenger is a refit and has no test metrics). Rule for `auto`: the challenger's mean MAE over those 5 races is at most 0.98 × the champion's and it is not worse in at least 3 of the 5. The current champion is the row with `demoted_at IS NULL`. |
 
 ### Predictions and ground truth
 
@@ -97,7 +97,7 @@ LEFT JOIN ground_truth g USING (entry_id);   -- NULL until the race result is in
 2. It inserts the new row in `features`, creates `feature_sets` `v2`, and lists the 15 items in `feature_set_items`.
 3. It computes values for `v2` only for the new feature (the unchanged ones can be copied or recomputed).
 4. It registers new `model_versions` with `feature_set_id = v2`.
-5. If one beats the champion by the promotion rule, `scripts/promote.py` promotes it automatically: a row is added to `champion_history` with `promoted_by = auto` and the previous one gets `demoted_at`. The first champion is promoted by hand.
+5. If the challenger (the refit, with the MLflow alias `challenger`) beats the champion by the promotion rule, `scripts/promote.py --auto` promotes it: a row is added to `champion_history` with `promoted_by = auto`, the previous one gets `demoted_at`, the champion that leaves gets `is_shadow = true` (and any older mark is cleared) and the `challenger` alias is removed from the promoted version. The first champion is promoted by hand.
 6. Old predictions keep pointing to the old model version and feature set, so history is never rewritten.
 
 Pivot from long to wide for training or prediction:
