@@ -10,6 +10,7 @@ from test_run_evaluation import parent, run, seven, supabase  # noqa: F401
 from training import promotion
 from training.evaluation import test_metric_rows
 from training.registry import REGISTERED_MODEL
+from training.selection import SIMPLICITY
 
 pytestmark = pytest.mark.slow  # logs real models in a local MLflow store: needs --runslow
 
@@ -172,3 +173,130 @@ def test_if_supabase_fails_the_alias_stays_and_a_new_call_completes_the_row(cli,
 def test_an_unknown_version_prints_stopped_and_exits_1(cli, uri, supabase, evaluated):
     code, lines = main(cli, uri, supabase, 999)
     assert code == 1 and len(lines) == 1 and lines[0].startswith("STOPPED:")
+
+
+# ---- the shadow mark and the challenger alias (SPEC 25) ----
+
+
+def shadows(supabase):
+    return sorted(r["model_version_id"] for r in supabase.tables["model_versions"] if r.get("is_shadow"))
+
+
+def set_challenger(uri, version):
+    MlflowClient(uri).set_registered_model_alias(REGISTERED_MODEL, "challenger", version.mlflow_version)
+
+
+def challenger_alias(uri):
+    try:
+        return str(MlflowClient(uri).get_model_version_by_alias(REGISTERED_MODEL, "challenger").version)
+    except Exception:
+        return None
+
+
+@pytest.fixture
+def three(evaluated, supabase):
+    """Three versions with test metrics, in the order they are promoted in the tests."""
+    first, second, third = evaluated["ridge"], evaluated[SIMPLICITY[1]], evaluated[SIMPLICITY[2]]
+    add_test_mae(supabase, second.model_version_id, 0.1)
+    add_test_mae(supabase, third.model_version_id, 0.1)
+    return first, second, third
+
+
+def test_the_first_champion_marks_no_shadow(cli, uri, supabase, three):
+    first, _, _ = three
+    result = promote(cli, uri, supabase, first.model_version_id)
+    assert shadows(supabase) == [] and result["shadow_set"] is None and result["shadow_cleared"] == []
+
+
+def test_a_second_promotion_marks_the_champion_that_leaves(cli, uri, supabase, three):
+    first, second, _ = three
+    promote(cli, uri, supabase, first.model_version_id)
+    result = promote(cli, uri, supabase, second.model_version_id)
+    assert shadows(supabase) == [first.model_version_id]
+    assert result["shadow_set"] == first.model_version_id and result["shadow_cleared"] == []
+
+
+def test_a_third_promotion_moves_the_mark_to_the_new_outgoing_champion(cli, uri, supabase, three):
+    first, second, third = three
+    for version in (first, second, third):
+        result = promote(cli, uri, supabase, version.model_version_id)
+    assert shadows(supabase) == [second.model_version_id]  # one shadow at a time
+    assert result["shadow_set"] == second.model_version_id and result["shadow_cleared"] == [first.model_version_id]
+    assert [r["model_version_id"] for r in current(supabase)] == [third.model_version_id]
+
+
+def test_the_champion_is_never_the_shadow(cli, uri, supabase, three):
+    first, second, _ = three
+    promote(cli, uri, supabase, first.model_version_id)
+    promote(cli, uri, supabase, second.model_version_id)
+    promote(cli, uri, supabase, first.model_version_id)  # back to the older champion, by hand
+    assert shadows(supabase) == [second.model_version_id]
+    assert [r["model_version_id"] for r in current(supabase)] == [first.model_version_id]
+
+
+def test_an_automatic_promotion_marks_the_shadow_too(cli, uri, supabase, three):
+    first, second, _ = three
+    promote(cli, uri, supabase, first.model_version_id)
+    cli.promote(second.model_version_id, "auto", client=supabase, tracking_uri=uri)
+    assert shadows(supabase) == [first.model_version_id]
+    assert current(supabase)[0]["promoted_by"] == "auto"
+
+
+def test_promoted_by_must_be_manual_or_auto(cli, uri, supabase, three):
+    writes = list(supabase.writes)
+    with pytest.raises(ValueError, match="promoted_by"):
+        cli.promote(three[0].model_version_id, "robot", client=supabase, tracking_uri=uri)
+    assert supabase.writes == writes and alias(uri) is None
+
+
+def test_the_challenger_alias_is_removed_from_the_promoted_version(cli, uri, supabase, three):
+    first, second, _ = three
+    promote(cli, uri, supabase, first.model_version_id)
+    set_challenger(uri, second)
+    result = promote(cli, uri, supabase, second.model_version_id)
+    assert challenger_alias(uri) is None and result["challenger_alias_removed"] is True
+    assert alias(uri) == second.mlflow_version
+
+
+def test_the_challenger_alias_on_another_version_stays(cli, uri, supabase, three):
+    first, second, third = three
+    promote(cli, uri, supabase, first.model_version_id)
+    set_challenger(uri, third)
+    result = promote(cli, uri, supabase, second.model_version_id)
+    assert challenger_alias(uri) == third.mlflow_version and result["challenger_alias_removed"] is False
+
+
+def test_if_the_mark_fails_a_new_call_completes_it_without_a_second_alias_change(
+    cli, uri, supabase, three, monkeypatch
+):
+    first, second, _ = three
+    promote(cli, uri, supabase, first.model_version_id)
+    real_update = promotion.update_rows
+
+    def update_or_fail(client, table, values, match):
+        if table == "model_versions":
+            raise RuntimeError("update of model_versions failed: ConnectionError")
+        return real_update(client, table, values, match)
+
+    monkeypatch.setattr(promotion, "update_rows", update_or_fail)
+    code, lines = main(cli, uri, supabase, second.model_version_id)
+    assert code == 1 and lines == ["STOPPED: update of model_versions failed: ConnectionError"]
+    assert alias(uri) == second.mlflow_version and shadows(supabase) == []
+    assert [r["model_version_id"] for r in current(supabase)] == [second.model_version_id]
+
+    monkeypatch.undo()
+    result = promote(cli, uri, supabase, second.model_version_id)
+    assert result["changed"] is True and result["alias_set"] is False and result["demoted"] == []
+    assert shadows(supabase) == [first.model_version_id] and supabase.count("champion_history") == 2
+    again = promote(cli, uri, supabase, second.model_version_id)
+    assert again["changed"] is False  # nothing is left to complete
+
+
+def test_promoting_the_current_champion_with_a_complete_mark_changes_nothing(cli, uri, supabase, three):
+    first, second, _ = three
+    promote(cli, uri, supabase, first.model_version_id)
+    promote(cli, uri, supabase, second.model_version_id)
+    before = (list(supabase.writes), [dict(r) for r in supabase.tables["model_versions"]])
+    result = promote(cli, uri, supabase, second.model_version_id)
+    assert result["changed"] is False and result["shadow_set"] == first.model_version_id
+    assert (supabase.writes, supabase.tables["model_versions"]) == before
