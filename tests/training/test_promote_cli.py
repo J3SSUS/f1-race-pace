@@ -7,6 +7,7 @@ import pytest
 from mlflow import MlflowClient
 from test_run_evaluation import parent, run, seven, supabase  # noqa: F401
 
+from training import promotion
 from training.evaluation import test_metric_rows
 from training.registry import REGISTERED_MODEL
 
@@ -157,7 +158,7 @@ def test_if_supabase_fails_the_alias_stays_and_a_new_call_completes_the_row(cli,
     def boom(*args, **kwargs):
         raise RuntimeError("insert into champion_history failed: ConnectionError")
 
-    monkeypatch.setattr(cli, "insert_rows", boom)
+    monkeypatch.setattr(promotion, "insert_rows", boom)
     code, lines = main(cli, uri, supabase, version.model_version_id)
     assert code == 1 and lines == ["STOPPED: insert into champion_history failed: ConnectionError"]
     assert alias(uri) == version.mlflow_version and current(supabase) == []
