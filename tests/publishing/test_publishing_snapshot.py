@@ -51,6 +51,48 @@ def test_a_newer_baseline_without_metrics_does_not_win(raw):
     assert normalize(raw)["baseline"] == {"model_version_id": 3, "algorithm": "baseline"}
 
 
+def with_challenger(raw: dict) -> dict:
+    """The golden rows plus a challenger (7) and its own baseline (8, newer than the champion's) on another race."""
+    other_race = next(m["race_id"] for m in raw["metrics"] if m["race_id"] is not None) + 1
+    rows = copy.deepcopy(raw)
+    rows["modelVersions"] += [
+        {"model_version_id": 7, "algorithm": "ridge", "is_shadow": False},
+        {"model_version_id": 8, "algorithm": "baseline", "is_shadow": False},
+    ]
+    for version in (7, 8):
+        rows["metrics"] += [
+            {"model_version_id": version, "race_id": None, "metric_name": "mae", "value": 9.99},
+            {"model_version_id": version, "race_id": other_race, "metric_name": "mae", "value": 9.99},
+        ]
+    return rows
+
+
+def test_a_challenger_and_its_baseline_leave_the_snapshot_as_it_was(raw, expected):
+    assert build_snapshot(with_challenger(raw), GENERATED_AT) == expected
+
+
+def test_the_baseline_is_the_one_scored_on_the_champions_races_not_the_newest(raw):
+    rows = with_challenger(raw)
+    assert normalize(rows)["baseline"] == {"model_version_id": 3, "algorithm": "baseline"}  # not 8, the newest
+    # once the challenger is the champion its own baseline is the one of its races
+    rows["championHistory"] = [{"model_version_id": 7, "promoted_at": "2026-11-20T00:00:00+00:00", "demoted_at": None}]
+    assert normalize(rows)["baseline"] == {"model_version_id": 8, "algorithm": "baseline"}
+
+
+def test_of_several_baselines_on_the_champions_races_the_newest_wins(raw):
+    rows = copy.deepcopy(raw)
+    rows["modelVersions"].append({"model_version_id": 9, "algorithm": "baseline", "is_shadow": False})
+    rows["metrics"].append({"model_version_id": 9, "race_id": 89, "metric_name": "mae", "value": 0.7})
+    assert normalize(rows)["baseline"] == {"model_version_id": 9, "algorithm": "baseline"}
+
+
+def test_no_baseline_on_the_champions_races_raises_naming_the_rule(raw):
+    rows = copy.deepcopy(raw)
+    rows["metrics"] = [m for m in rows["metrics"] if not (m["model_version_id"] == 3 and m["race_id"] == 89)]
+    with pytest.raises(ValueError, match=r"no baseline version has walk_forward metrics on the champion's races"):
+        normalize(rows)
+
+
 def test_only_the_champion_and_baseline_metrics_are_kept_in_order(raw):
     kept = normalize(raw)["metrics"]
     assert {row["model_version_id"] for row in kept} == {3, 4}

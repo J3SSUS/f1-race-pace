@@ -129,20 +129,35 @@ function findChampion(championHistory, modelVersions) {
   return { model_version_id: id, algorithm: version.algorithm, promoted_at: current[0].promoted_at };
 }
 
-/* The baseline is the `model_versions` row with `algorithm = 'baseline'` that has walk-forward metrics; if several
-   have them, the newest, as `find_baseline` does in SPEC 14. */
-function findBaseline(modelVersions, metrics) {
+/* The races (`race_id`) with metric rows of a version; the aggregate rows have no race. */
+function metricRaces(metrics, versionId) {
+  return new Set(
+    metrics.filter((row) => row.model_version_id === versionId && row.race_id !== null).map((row) => row.race_id),
+  );
+}
+
+/* The baseline of the champion is the `model_versions` row with `algorithm = 'baseline'` whose walk-forward metrics
+   cover exactly the races of the champion's (every version is scored with its baseline on the same rows, SPEC 24), so
+   the baseline of a challenger that predicted only the latest races is not it. If several match, the newest, as
+   `find_baseline` does in `src/publishing/snapshot.py`. */
+function findBaseline(modelVersions, metrics, championId) {
   const scored = new Set(metrics.map((row) => row.model_version_id));
   const candidates = modelVersions.filter((row) => row.algorithm === "baseline" && scored.has(row.model_version_id));
   if (candidates.length === 0) throw new Error("model_versions: no baseline version has walk_forward metrics");
-  const newest = candidates.reduce((a, b) => (b.model_version_id > a.model_version_id ? b : a));
+  const races = metricRaces(metrics, championId);
+  const same = (other) => other.size === races.size && [...other].every((id) => races.has(id));
+  const matching = candidates.filter((row) => same(metricRaces(metrics, row.model_version_id)));
+  if (matching.length === 0) {
+    throw new Error("model_versions: no baseline version has walk_forward metrics on the champion's races");
+  }
+  const newest = matching.reduce((a, b) => (b.model_version_id > a.model_version_id ? b : a));
   return { model_version_id: newest.model_version_id, algorithm: "baseline" };
 }
 
 /* The live rows in the shape of the snapshot: the champion, the baseline and only their metrics. */
 function normalizeLive(rows) {
   const champion = findChampion(rows.championHistory, rows.modelVersions);
-  const baseline = findBaseline(rows.modelVersions, rows.metrics);
+  const baseline = findBaseline(rows.modelVersions, rows.metrics, champion.model_version_id);
   const scored = new Set([champion.model_version_id, baseline.model_version_id]);
   return {
     champion,

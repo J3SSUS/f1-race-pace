@@ -33,7 +33,7 @@
 - A new script `scripts/walk_forward_metrics.py --year` (`ml` image) recomputes them, and a task `metrics` after the ground truth task in the DAG `ground_truth` runs it for the year of the race. It is a separate script and task because the ground truth runs in the `data` image, which has no MLflow, and `walk_forward_metrics` needs it to find the baselines. If the metrics fail the task is red and the ground truth, already stored, is not redone.
 
 *The page*
-- It keeps showing only the champion. A test proves that rows of a challenger in `predictions` and `metrics` leave the generated `site/` unchanged; the generator is filtered by the champion only if that test shows it needs it.
+- It keeps showing only the champion, and looks the same. `prediction_results` was already read by the champion's version and the metrics were already cut to the champion and its baseline, but the baseline was "the newest baseline version with `walk_forward` metrics": once the challenger's baseline has metrics, that rule would pick it. The baseline of the champion becomes the baseline version whose `walk_forward` metrics cover exactly the same races as the champion's (the newest if several do), in `find_baseline` of `src/publishing/snapshot.py` and `findBaseline` of `docs/site/site.js`, with the same golden fixture checked by Python and by Node.
 
 *Docs*
 - Lines in `DECISIONS.md` **before any code**: the `challenger` alias, that the refit sets it and replaces the previous one, that the shadow is a registry mark and does not predict, the per-model idempotence, the failure rule, the baseline by kind, the skip of races at or before the challenger's cutoff, and the metrics script and task.
@@ -138,8 +138,10 @@ The order is `resolve_race → ground_truth → metrics`, with `retries = 0` lik
     scripts/walk_forward_metrics.py  # new
     dags/ground_truth.py             # + task metrics
     tests/test_dependency_split.py   # walk_forward_metrics is an `ml` step
-    src/sitegen/                     # only if the unchanged-page test needs a champion filter
-    tests/training/ tests/live/ tests/sitegen/
+    src/publishing/snapshot.py       # find_baseline: the baseline scored on the champion's races
+    docs/site/site.js                # findBaseline: the same rule (site/site.js is generated from it)
+    tests/publishing/ tests/site/js/ # the golden fixture and the tests of both sides, with a challenger
+    tests/training/ tests/live/
     DECISIONS.md  CLAUDE.md  docs/definition_scope_architecture.md  docs/backlog.md  README.md
 
 ---
@@ -157,7 +159,7 @@ Each step leaves the system working. The files are written by the agent; every c
 7. **The backtest with the challenger.** `backtest_season` predicts every active model that applies to each race (step 4), then writes ground truth as it does, then the metrics. Its summary lists one line per model. Tests with the fakes: the challenger predicts only the races after its cutoff, the champion's races are skipped as before. Check: `pytest` and `ruff` pass.
 8. **`scripts/walk_forward_metrics.py`.** The CLI of the data model, with `tests/` for the success, `MetricsError` and `--help`, and `tests/test_dependency_split.py` knows it as an `ml` step. Check: `pytest` and `ruff` pass, and `uv run python scripts/walk_forward_metrics.py --help` lists `--year`.
 9. **The refit sets the alias.** In `src/training/refit.py` and `scripts/refit.py`: after both versions and rows exist, `set_registered_model_alias` for `challenger` on the candidate. If the alias is already on that version nothing moves, so running it again is safe and it also sets the alias on a refit made before this spec. It prints one line (`challenger: version N`, with the replaced version if there was one). Tests: first refit sets it, a second refit moves it, a rerun moves nothing, the `champion` alias and `champion_history` are never touched, the alias is not set when the refit stopped at the gate. Check: `pytest` and `ruff` pass.
-10. **The page does not change.** A test in `tests/sitegen/` with rows of a challenger in `predictions` and `metrics` checks that the generated `site/` is the same as without them. If it fails, the generator filters by the champion only where it needs it. Check: `pytest` and `ruff` pass.
+10. **The page does not change.** The baseline of the champion is the baseline version whose `walk_forward` metrics cover exactly the same races as the champion's, the newest if several do (it stops with a message naming the rule if none does), in `find_baseline` (`src/publishing/snapshot.py`, which gets the champion's version id) and `findBaseline` (`docs/site/site.js`). Tests on both sides with the golden rows plus a challenger, its baseline and their metrics: the snapshot is the same as without them; a baseline with metrics over other races is not picked; the newest of several that match wins. Check: `pytest` and `ruff` pass, and `node --test tests/site/js/` passes.
 11. **The `ml` image in the cluster.** The user rebuilds it (`docker build -f docker/pipeline/Dockerfile --target ml -t f1-pipeline-ml:0.1.0 .`) and loads it again (`kind load docker-image f1-pipeline-ml:0.1.0 --name f1`), then `docker image prune -f`. Check: `k8s/run-step.sh ml scripts/predict.py --help`, the same for `refit.py` and for `walk_forward_metrics.py`, exit 0.
 12. **The `metrics` task in the `ground_truth` DAG.** `dags/ground_truth.py` gets the task. The user runs `kubectl apply -k k8s` (a changed DAG file takes five to eight minutes to reach the pods: check it in the pod before triggering). Check: `ground_truth` has no import errors; triggered with `year = 2026` and `round = 20` (its ground truth is already stored and the script is idempotent) the three tasks end green, `metrics` upserts and the count of `metrics` rows does not grow for the champion and its baseline.
 13. **Set the challenger on the existing refit.** `k8s/run-step.sh ml scripts/refit.py 94d1b5d3...` (the sampling run of SPEC 23, the full id read from MLflow) prints `(reused)` for both models and sets the alias on version 33. Check: version 33 has the alias `challenger`, version 4 keeps `champion`, `champion_history` has its one row, and no `model_versions` row or MLflow version was added.
@@ -214,7 +216,10 @@ Each step leaves the system working. The files are written by the agent; every c
 
 **The page**
 
-- [ ] With rows of a challenger in `predictions` and in `metrics`, the generated `site/` is identical to the one without them (a test in `tests/sitegen/`).
+- [ ] With a challenger, its baseline and their `walk_forward` metrics added to the golden rows, `normalize` (Python) and `normalizeLive` (Node) give the same snapshot as without them.
+- [ ] The baseline of the champion is the baseline version with metrics over the same races as the champion's (the newest if several), and a baseline with metrics over other races is never picked; with none it stops naming the rule. The same on both sides.
+- [ ] `prediction_results` is still read only for the champion's `model_version_id` (a challenger's rows never reach the snapshot).
+- [ ] `node --test tests/site/js/` passes, and `uv run python scripts/build_site.py` writes a `site/site.js` that has the new rule.
 
 **In the cluster**
 
@@ -251,7 +256,7 @@ Each step leaves the system working. The files are written by the agent; every c
 - **Races at or before the challenger's cutoff are skipped, not an error.** The flow has no way to ask for another race. Scoring a race the model trained on would mislead (SPEC 23: a refit has no clean test, only the forward one), so it is skipped with a line that says why.
 - **`walk_forward` metrics for every version with predictions.** Each version is scored on its own valid rows with its own baseline, and the old limit "scoring more than one champion is not supported yet" goes away. SPEC 25 compares two versions on the same races by reading these rows by race; this spec does not compute that comparison.
 - **The metrics are recomputed by a script and a task of their own.** Only `backtest.py` did it. In 2027 the metrics of the champion and the challenger would not move after a race, and SPEC 25 would have nothing to read. They cannot go in `scripts/ground_truth.py`: the `ground_truth` DAG runs in the `data` image, which has no MLflow, and the baselines are found through it. A separate task also means that a failure of the metrics is a red task and not a hidden warning, while the ground truth, already stored, is not redone.
-- **The page does not change.** It shows only the champion. The `predictions` and `metrics` tables are public by RLS, so the challenger's rows are visible to anyone with the anon key; they carry no secret and the rows of any `model_version_id` are already there. A test proves that the page ignores them.
+- **The page does not change, and the baseline is found by the races it covers.** It shows only the champion. The old rule ("the newest baseline with `walk_forward` metrics") would pick the challenger's baseline as soon as it has metrics, and show a baseline scored on a few races next to the champion's season. The new rule picks the baseline version whose metrics cover exactly the races of the champion's: it is true by construction (every version is scored with its baseline on the same rows), needs no column and no table change, and gives the champion's baseline when a refit is promoted. The `predictions` and `metrics` tables are public by RLS, so the challenger's rows are visible to anyone with the anon key; they carry no secret and the rows of any `model_version_id` are already there.
 - **One DAG file changes.** `predict`, `backtest` and `refit` run in the `ml` image, so the `prediction` DAG predicts the challenger because the script does. Only `dags/ground_truth.py` changes, for the `metrics` task.
 - **The verification uses what exists.** Version 33 is the challenger of the check: `refit.py` is rerun on the sampling run of SPEC 23 (it is idempotent), and the backtest of 2026 gives it the forward evaluation of rounds 11 to 20. Round 20 is used for the DAG checks, deleting only the challenger's rows of that race by hand.
 
@@ -268,6 +273,7 @@ Each step leaves the system working. The files are written by the agent; every c
 - **Predicting the races the challenger trained on, to fill the metrics:** the numbers would describe rows it saw.
 - **Computing the 0.98 × MAE comparison here:** that is the promotion rule, SPEC 25. Doing it here would put the decision in a spec that promotes nothing.
 - **Showing the challenger on the page:** the page stays as it is, by the user's decision.
+- **The baseline by `trained_through_race_id`, a baseline version stored with the champion, or the challenger's metrics under another `split`:** the first reads a column in both places and relies on two trainings never ending on the same race; the second is a schema change; the third breaks the metrics SPEC 25 reads.
 
 ---
 
@@ -285,6 +291,7 @@ Each step leaves the system working. The files are written by the agent; every c
 | **The metrics recomputation is slower or heavier than the ground truth.** It reads all the predictions and the ground truth of the year and calls MLflow. | It is its own task, so it does not delay or fail the ground truth. The cluster check records its duration; it was already run for the whole season in SPEC 15. |
 | **The `ml` image is stale, or the changed DAG file has not reached the pods.** The tag stays `0.1.0`, and a DAG file takes five to eight minutes to appear. | Steps 11 and 12 check `--help` and the file in the pod before any trigger. The README keeps the rule of SPEC 21: `kind load` after every rebuild. |
 | **The challenger's rows are public.** `predictions` and `metrics` are readable with the anon key. | They hold predictions of a model, with no secret. The page ignores them (tested). Hiding them would be an RLS change, a spec of its own. |
+| **The new baseline rule finds none.** A champion whose metrics cover races that no baseline version covers (for example a metrics recomputation interrupted between two versions). | It stops with a message naming the rule and the live page falls back to `snapshot.json`; the next run of `walk_forward_metrics` restores it. |
 | **A promotion happens while a run is in the middle of a race.** The alias moves between two Saturdays or during a run. | Promotion is a manual script (SPEC 25), outside the flow; a run reads the aliases once at the start, so a race is predicted with one pair of models. |
 
 ---
