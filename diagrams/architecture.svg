@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 820" width="480" height="820" role="img" aria-label="The DAGs run locally and write to Supabase, which feeds the page; GitHub Actions tests, builds and deploys" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="13">
   <title>F1 race pace MLOps: architecture</title>
-  <desc>Three Airflow DAGs run on demand locally on Kubernetes (kind): training, prediction after qualifying, and ground truth after the race. The training DAG has four steps: sampling (ingestion and train/test split), preprocess, training and evaluate. Raw data stays in local Parquet and MLflow holds runs, registry and the registered datasets. Features, predictions and metrics go to Supabase, where the GitHub Pages site reads the public tables. Evidently, after the core, reads features and results from Supabase, writes its drift reports there and triggers retraining. Also after the core, GitHub Actions (CI/CD) runs the tests, builds the images used by the pods, and deploys the page; model promotion is a local script.</desc>
+  <desc>Three Airflow DAGs run on demand locally on Kubernetes (kind): training, prediction after qualifying, and ground truth after the race. The training DAG has four steps: sampling (ingestion and train/test split), preprocess, training and evaluate. Raw data stays in local Parquet and MLflow holds runs, registry and the registered datasets. Features, predictions and metrics go to Supabase, where the GitHub Pages site reads the public tables. Evidently, after the core, reads features and results from Supabase, writes its drift reports there; retraining is started by hand. Also after the core, GitHub Actions (CI/CD) runs the tests, builds the images used by the pods, and deploys the page; model promotion is a local script.</desc>
 
   <defs>
     <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
@@ -91,7 +91,7 @@
   <rect class="soon" x="48" y="544" width="176" height="72" rx="8"/>
   <text class="ink" x="136" y="568" text-anchor="middle">Evidently</text>
   <text class="sub" x="136" y="584" text-anchor="middle">Drift and MAE</text>
-  <text class="sub" x="136" y="600" text-anchor="middle">Triggers retrain. After core</text>
+  <text class="sub" x="136" y="600" text-anchor="middle">Reports drift. After core</text>
 
   <!-- flows -->
   <path class="flow" d="M84 106V178" marker-end="url(#arrow)"/>

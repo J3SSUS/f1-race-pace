@@ -88,8 +88,8 @@ LEFT JOIN ground_truth g USING (entry_id);   -- NULL until the race result is in
 
 | Table | Key | Purpose |
 | --- | --- | --- |
-| `drift_reports` | `drift_report_id` | Evidently run every 3 races: MAE change, number of drifted features and whether it triggered retraining (MAE up 15% or drift in 3+ features). |
-| `drift_feature_results` | `(drift_report_id, feature_id)` | Per-feature drift statistic, p-value and flag. |
+| `drift_reports` | `drift_report_id`, unique `(model_version_id, through_race_id)` | Evidently report of the champion, made every 5 races over those 5 races (`from_race_id` to `through_race_id`): current and reference MAE (`reference_source` is `test` for a champion that is not a refit and `challenger` for a refit one), `mae_change_pct`, `n_drifted_features`, row counts, `rule_met` (MAE up 15% or drift in 3+ features), the `mlflow_run_id` of the HTML report and `generated_at`. `triggered_retrain` is not used (retrainings are manual, DECISIONS 2026-11-26): it stays false. |
+| `drift_feature_results` | `(drift_report_id, feature_id)` | Per-feature drift statistic, p-value, flag and the test used (`ks` for numeric features, `chisquare` for categorical and boolean ones; drifted at p < 0.05). |
 
 ## Retraining example
 

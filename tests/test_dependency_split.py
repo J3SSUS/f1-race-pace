@@ -109,6 +109,7 @@ def test_the_walk_really_follows_the_code():
         "matplotlib",
         "jinja2",
         "markdown",
+        "evidently",
     }
 
 

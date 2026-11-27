@@ -19,6 +19,7 @@ IDENTITY = {
     "champion_history": "champion_id",
     "prediction_runs": "prediction_run_id",
     "predictions": "prediction_id",
+    "drift_reports": "drift_report_id",
 }
 
 

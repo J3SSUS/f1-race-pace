@@ -11,7 +11,7 @@ Closed decisions:
 - Orchestration: Airflow with `KubernetesPodOperator` on kind (machine with 16 GB or more).
 - Three DAGs: training, prediction (every Saturday after qualifying) and ground truth (after each race), run on demand from the local machine. No API: FastAPI is an optional extra.
 - Data: seasons 2023 to 2027 from OpenF1 (free; it has no 2022 data), with raw data in local Parquet and everything calculated (features, target, predictions, metrics) in Supabase. Chronological 80/20 train/test split by race (no separate validation set; model selection uses temporal cross-validation inside train) and walk-forward retraining in 2026, where a retrained model (the challenger) predicts the same races as the champion until it is promoted or replaced. With about 6 races of 2026 left on 2026-10-15, 2026 is a backtest and live predictions start with 2027 (the last 2026 races live only if the pipeline is ready in time).
-- Evidently, retraining trigger and GitHub Actions: after the core.
+- Evidently and GitHub Actions: after the core. Retrainings are manual.
 - Zero cost: public repository and GitHub Pages for the page.
 - Out of scope: Kubeflow, MinIO, Prometheus/Grafana, Helm (except the Airflow chart), cloud and betting.
 
@@ -80,7 +80,7 @@ The core includes the static page and the champion explanation, because they are
 | Stage | Includes |
 | --- | --- |
 | Core | Ingestion with Pandera; short EDA; preprocessing (features, target and valid-row rule); qualifying baseline and 6 models (Ridge, ElasticNet, Random Forest, XGBoost, LightGBM, CatBoost) with Optuna; evaluation (candidate selection, SHAP and model card); first champion promoted by hand; three DAGs (training, prediction and ground truth); `predictions` table; artifacts and static page. First as scripts in docker-compose, then on Kubernetes with Airflow |
-| After the core | Evidently (drift and MAE, internal only) with retraining trigger; walk-forward retraining of 2026; GitHub Actions for tests, image builds and page deployment; promotion by a local script (manual for the first champion, automatic after a retraining). Optional extra: FastAPI to practice Deployment, Service and Ingress |
+| After the core | Evidently (drift and MAE, internal only; its report says when to retrain, and the user retrains by hand); walk-forward retraining of 2026; GitHub Actions for tests, image builds and page deployment; promotion by a local script (manual for the first champion, automatic after a retraining). Optional extra: FastAPI to practice Deployment, Service and Ingress |
 | Out of scope | Kubeflow, MinIO, Prometheus/Grafana, Helm (except the Airflow chart), cloud deployment and betting (kept as an extension: teammate duels) |
 
 Changes from what was discussed: SHAP enters the scope, only for the champion, because the page's explanation section needs it; and FastAPI leaves the core, because predictions are batch and the page is static.
@@ -97,7 +97,7 @@ The whole pipeline runs locally and the three DAGs are triggered by hand: traini
 - **kind (phase 8):** MLflow moves into the cluster, Airflow 3.x runs from its official image, and the pipeline steps run as pods from a separate pipeline image. All pods share one PVC for Parquets and artifacts. The Supabase service key is a Kubernetes Secret; images are loaded with `kind load docker-image`.
 - **MLflow registry:** one registered model `f1-race-pace`, one version per run (the baseline included, tagged with its algorithm) and the `champion` alias on one version.
 - **Prediction DAG:** it creates `races` and `race_entries` for a new race, runs any missing earlier ground truth (the form features need it) and predicts with the champion and, if there is one, the challenger (the MLflow alias `challenger`, set by the refit of a retraining), each under its own `model_version_id` and the challenger only on races after its cutoff. The shadow is a registry mark and does not predict. The life of a model is: champion, drift, refit, challenger, promotion (or replacement by the next refit), and then only the champion predicts.
-- **Evidently:** last task of the ground truth DAG, run once 3 races have been ingested since the last report. If the rule holds, it triggers the training DAG through Airflow's REST API with the race cutoff.
+- **Evidently:** last task of the ground truth DAG, run once 5 races have been ingested since the champion's last report; it compares the last 5 races with the champion's reference (MAE change and a KS or chi-squared test per feature, drift at p < 0.05) and stores the result and whether the rule holds (MAE up 15% or drift in 3+ features). It never triggers a retraining: when the rule holds, you start the training DAG by hand with the race cutoff and `refit`.
 - **Tooling:** Python 3.12 and uv.
 
 ## Static page and artifacts
@@ -139,7 +139,7 @@ The core is phases 1 to 8; phase 9 comes after. A phase does not start until the
 6. **Prediction and ground truth DAGs**: done when, as scripts in docker-compose, the backtest of 2026 runs race by race using only data up to each Saturday and fills `predictions` (the champion and the baseline; the challenger from Phase 9), the ground truth DAG inserts the actual pace into `ground_truth`, and one race is predicted live (a late-2026 race if the pipeline is ready, otherwise the first of 2027). Both call the feature function from phase 3.
 7. **Page**: done when the script generates `site/` with results, features, predicted vs actual and the explanation, and it renders locally.
 8. **Kubernetes and Airflow**: done when the three DAGs run end to end on kind, with one pod per step and per model, and the prediction DAG takes year and round as parameters.
-9. **After the core**: done when Evidently detects drift in the 2026 backtest or in 2027 and triggers the training DAG, a push to `main` deploys the page with GitHub Actions, and the local promotion script exists (manual for the first champion, automatic after a retraining). FastAPI, if wanted, goes here as an extra.
+9. **After the core**: done when Evidently reports drift in the 2026 backtest or in 2027, a push to `main` deploys the page with GitHub Actions, and the local promotion script exists (manual for the first champion, automatic after a retraining). FastAPI, if wanted, goes here as an extra.
 
 ## Risks and mitigations
 
