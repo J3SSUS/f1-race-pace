@@ -1,6 +1,6 @@
 # SPEC 26 — Evidently drift reports
 
-> **Status:** Draft
+> **Status:** Approved
 > **Depends on:** SPEC 15 (walk-forward metrics), SPEC 20 (the `ground_truth` DAG), SPEC 23 (the refit), SPEC 24 (challenger predictions and the `metrics` task), SPEC 25 (promotion and `champion_history`)
 > **Backlog:** Phase 9, "Monitoring (internal only)": Evidently as the last task of the ground truth DAG, MAE and feature drift, write `drift_reports` and `drift_feature_results`; the evaluation of the trigger rule, not the call to Airflow (SPEC 27)
 > **Date:** 2026-11-26
