@@ -5,6 +5,7 @@
 > **Backlog:** Phase 9, "Monitoring (internal only)": Evidently as the last task of the ground truth DAG, MAE and feature drift, write `drift_reports` and `drift_feature_results`; the evaluation of the trigger rule, not the call to Airflow (SPEC 27)
 > **Date:** 2026-11-26
 > **Objective:** Once 5 races have been ingested since the champion's last report, compare the champion's last 5 races with its reference (MAE change and per-feature drift with Evidently) and store the result in `drift_reports` and `drift_feature_results`, internal only.
+> **Note (2026-11-26):** SPEC 27 was dropped (`DECISIONS.md`, 2026-11-26): retrainings are manual and `triggered_retrain` stays unused, always false. Read the mentions of SPEC 27 below that way.
 
 ---
 

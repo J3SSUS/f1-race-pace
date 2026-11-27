@@ -6,9 +6,9 @@ recomputes the `walk_forward` metrics of that year for every model version with 
 challenger are scored after each race; it runs in the `ml` image because it finds the baselines through MLflow, which
 the `data` image of the ground truth does not have. A failure of `metrics` leaves the ground truth stored. The fourth,
 `drift` (SPEC 26), makes the champion's drift report once 5 races are waiting after its last one and otherwise ends
-green saying how many are; it also runs in the `ml` image, and it never triggers a retraining (SPEC 27). A failure of
-`drift` leaves the ground truth and the metrics stored. No automatic retries: a `STOPPED:` shows as a failed task, and
-the user triggers the DAG again (30 minutes after a session ends, if it was live).
+green saying how many are; it also runs in the `ml` image, and it never triggers a retraining (those are manual). A
+failure of `drift` leaves the ground truth and the metrics stored. No automatic retries: a `STOPPED:` shows as a failed
+task, and the user triggers the DAG again (30 minutes after a session ends, if it was live).
 """
 
 from __future__ import annotations

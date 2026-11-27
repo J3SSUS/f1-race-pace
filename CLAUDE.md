@@ -22,7 +22,7 @@ Status: phase 0 (setup) in progress. Read `docs/backlog.md` before starting any 
 - **Data:** raw data in local Parquet; everything calculated (features in long format, ground truth, predictions, metrics) in Supabase. Training reads features from Supabase.
 - **Models:** qualifying baseline (linear regression on `quali_delta_pct`) plus Ridge, ElasticNet, Random Forest, XGBoost, LightGBM and CatBoost, with Optuna and temporal CV inside train. Imputation lives inside each model's pipeline. Main metric: MAE against the baseline, counting only valid rows. Test is touched once, to report; only after that does it enter the refit of a retraining.
 - **Champion:** the `champion` alias on the MLflow model `f1-race-pace`. Training and Evaluate never promote. Promotion is the local script `scripts/promote.py` (first champion by hand; later only with the 0.98 × MAE rule over the last 5 races), never GitHub Actions.
-- **Calendar:** first model trains on 2023–2025 (OpenF1 has no earlier data); 2026 is a walk-forward backtest; live predictions start with 2027 (or the last 2026 races if the pipeline is ready). A model's life: the champion predicts; drift triggers a retraining with refit; the refit becomes the `challenger` (an MLflow alias set by the refit) and predicts the same races as the champion; if it wins over the last 5 races it is promoted and only the champion predicts. The shadow is only a registry mark (`is_shadow`), not a predicting model.
+- **Calendar:** first model trains on 2023–2025 (OpenF1 has no earlier data); 2026 is a walk-forward backtest; live predictions start with 2027 (or the last 2026 races if the pipeline is ready). A model's life: the champion predicts; a drift report says when the retraining rule holds and the user retrains by hand with refit; the refit becomes the `challenger` (an MLflow alias set by the refit) and predicts the same races as the champion; if it wins over the last 5 races it is promoted and only the champion predicts. The shadow is only a registry mark (`is_shadow`), not a predicting model.
 - **Secrets:** the Supabase service key lives in `.env` (gitignored) or a Kubernetes Secret, never in the repo. The page only uses the anon key with read-only RLS.
 
 ## Conventions
@@ -30,5 +30,5 @@ Status: phase 0 (setup) in progress. Read `docs/backlog.md` before starting any 
 - Python 3.12, uv, ruff, pytest. Pin versions in `pyproject.toml`.
 - Every row and artifact carries `run_id`, model version and generation date.
 - Target tests use synthetic raw tables built in `tests/features` (no OpenF1 data in the repo) with values derived by hand.
-- After the core (phase 9): Evidently, retraining trigger and GitHub Actions (tests, image builds, page deploy). Out of scope: Kubeflow, MinIO, Prometheus/Grafana, Helm (except the Airflow chart), cloud, betting.
+- After the core (phase 9): Evidently and GitHub Actions (tests, image builds, page deploy). Retrainings are manual (no call to Airflow's REST API). Out of scope: Kubeflow, MinIO, Prometheus/Grafana, Helm (except the Airflow chart), cloud, betting.
 - Commit only when the user asks.

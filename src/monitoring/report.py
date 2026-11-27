@@ -3,8 +3,8 @@
 `build_report` joins the pieces of `monitoring.inputs` with `monitoring.drift`. `write_report` stores one report: the
 Evidently HTML as an artifact of a run in the `drift` experiment of MLflow, then the row of `drift_reports` and its
 rows of `drift_feature_results`. It is idempotent: a report that already exists (same model version and through race)
-writes no row and no run, one that failed halfway is completed, and `triggered_retrain` is always false here (SPEC 27
-is the one that sets it).
+writes no row and no run, one that failed halfway is completed, and `triggered_retrain` is always false here
+(retrainings are manual and nothing sets it).
 """
 
 from dataclasses import dataclass
@@ -137,7 +137,7 @@ def report_row(report: DriftReport, mlflow_run_id: str, dag_run_id: str | None) 
         "mae_change_pct": float(report.mae_change_pct),
         "n_drifted_features": int(report.n_drifted_features),
         "rule_met": bool(report.rule_met),
-        "triggered_retrain": False,  # only SPEC 27 sets it, when it calls Airflow
+        "triggered_retrain": False,  # unused: retrainings are manual (DECISIONS 2026-11-26)
         "mlflow_run_id": mlflow_run_id,
         "dag_run_id": dag_run_id,
     }
