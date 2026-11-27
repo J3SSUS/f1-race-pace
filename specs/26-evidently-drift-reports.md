@@ -1,6 +1,6 @@
 # SPEC 26 — Evidently drift reports
 
-> **Status:** Approved
+> **Status:** Implemented
 > **Depends on:** SPEC 15 (walk-forward metrics), SPEC 20 (the `ground_truth` DAG), SPEC 23 (the refit), SPEC 24 (challenger predictions and the `metrics` task), SPEC 25 (promotion and `champion_history`)
 > **Backlog:** Phase 9, "Monitoring (internal only)": Evidently as the last task of the ground truth DAG, MAE and feature drift, write `drift_reports` and `drift_feature_results`; the evaluation of the trigger rule, not the call to Airflow (SPEC 27)
 > **Date:** 2026-11-26
@@ -117,26 +117,26 @@ Rules:
 
 ## Acceptance criteria
 
-- [ ] `DECISIONS.md` has the lines of step 1, dated before any code change of this spec.
-- [ ] Migration `0005` is applied: `drift_reports` has the new columns and `UNIQUE (model_version_id, through_race_id)`, and `drift_feature_results` has `stattest`.
-- [ ] `scripts/check_supabase.py` passes and `anon` gets no row from `drift_reports` or `drift_feature_results`.
-- [ ] Evidently is pinned to an exact version in the `ml` group and is not installed in the `data` image (`tests/test_dependency_split.py` passes).
-- [ ] With fewer than 5 races since the start point, `scripts/drift_report.py` prints "N of 5 races since the last report", writes nothing and exits 0.
-- [ ] With 5 or more races, the report uses the last 5 by (year, round), not by `race_id`.
-- [ ] Numeric features use KS and the four categorical or boolean ones (`circuit_type`, `reached_q3`, `rain_flag`, `is_sprint_weekend`) use chi-squared, and each `drift_feature_results` row stores its `stattest`.
-- [ ] A feature is `is_drifted` exactly when its p-value is below 0.05.
-- [ ] `rule_met` is true exactly when `mae_change_pct >= 15` or `n_drifted_features >= 3` (unit tests on both edges).
-- [ ] `triggered_retrain` is false in every row this spec writes.
-- [ ] A non-refit champion has `reference_source = 'test'` and its overall test MAE as `reference_mae`; a refit champion has `reference_source = 'challenger'` and its MAE over the 5 races before its promotion (tested with fakes).
-- [ ] A refit champion with fewer than 5 races before its promotion stops with `STOPPED:` and exit 1, writing nothing.
-- [ ] Each report writes one MLflow run in the `drift` experiment with the Evidently HTML as an artifact, and its id is in `drift_reports.mlflow_run_id`.
-- [ ] Running the script again for the same races writes no new row and no new MLflow run.
-- [ ] The DAG `ground_truth` lists `resolve_race`, `ground_truth`, `metrics` and `drift`, in that order, and `drift` runs in the `ml` image.
-- [ ] The real backfill `--year 2026` wrote 4 reports for version 4 (through 2026 rounds 5, 10, 15 and 20), each with 15 `drift_feature_results` rows.
-- [ ] A real run of the DAG `ground_truth` for 2026 round 21 ended green in its four tasks without writing a drift report.
-- [ ] Nothing of drift appears in `site/` or `snapshot.json` (the exposure check of SPEC 17 passes).
-- [ ] `uv run pytest` and `uv run ruff check src scripts tests` pass.
-- [ ] `docs/data_model.md`, `docs/definition_scope_architecture.md` and the Phase 9 lines of `docs/backlog.md` say 5 races.
+- [x] `DECISIONS.md` has the lines of step 1, dated before any code change of this spec.
+- [x] Migration `0005` is applied: `drift_reports` has the new columns and `UNIQUE (model_version_id, through_race_id)`, and `drift_feature_results` has `stattest`.
+- [x] `scripts/check_supabase.py` passes and `anon` gets no row from `drift_reports` or `drift_feature_results`.
+- [x] Evidently is pinned to an exact version in the `ml` group and is not installed in the `data` image (`tests/test_dependency_split.py` passes).
+- [x] With fewer than 5 races since the start point, `scripts/drift_report.py` prints "N of 5 races since the last report", writes nothing and exits 0.
+- [x] With 5 or more races, the report uses the last 5 by (year, round), not by `race_id`.
+- [x] Numeric features use KS and the four categorical or boolean ones (`circuit_type`, `reached_q3`, `rain_flag`, `is_sprint_weekend`) use chi-squared, and each `drift_feature_results` row stores its `stattest`.
+- [x] A feature is `is_drifted` exactly when its p-value is below 0.05.
+- [x] `rule_met` is true exactly when `mae_change_pct >= 15` or `n_drifted_features >= 3` (unit tests on both edges).
+- [x] `triggered_retrain` is false in every row this spec writes.
+- [x] A non-refit champion has `reference_source = 'test'` and its overall test MAE as `reference_mae`; a refit champion has `reference_source = 'challenger'` and its MAE over the 5 races before its promotion (tested with fakes).
+- [x] A refit champion with fewer than 5 races before its promotion stops with `STOPPED:` and exit 1, writing nothing.
+- [x] Each report writes one MLflow run in the `drift` experiment with the Evidently HTML as an artifact, and its id is in `drift_reports.mlflow_run_id`.
+- [x] Running the script again for the same races writes no new row and no new MLflow run.
+- [x] The DAG `ground_truth` lists `resolve_race`, `ground_truth`, `metrics` and `drift`, in that order, and `drift` runs in the `ml` image.
+- [x] The real backfill `--year 2026` wrote 4 reports for version 4 (through 2026 rounds 5, 10, 15 and 20), each with 15 `drift_feature_results` rows.
+- [x] A real run of the DAG `ground_truth` for 2026 round 21 ended green in its four tasks without writing a drift report.
+- [x] Nothing of drift appears in `site/` or `snapshot.json` (the exposure check of SPEC 17 passes).
+- [x] `uv run pytest` and `uv run ruff check src scripts tests` pass.
+- [x] `docs/data_model.md`, `docs/definition_scope_architecture.md` and the Phase 9 lines of `docs/backlog.md` say 5 races.
 
 ---
 
