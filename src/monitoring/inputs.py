@@ -60,6 +60,11 @@ def race_order(client) -> dict[int, tuple[int, int]]:
     return {r["race_id"]: (r["year"], r["round"]) for r in read_table(client, "races", "race_id,year,round")}
 
 
+def feature_ids(client) -> dict[str, int]:
+    """`features.name -> feature_id`, what `drift_feature_results` points at."""
+    return {r["name"]: r["feature_id"] for r in read_table(client, "features", "feature_id,name")}
+
+
 def load_champion(client, ml: MlflowClient) -> Champion:
     """The current champion: the one open row of `champion_history`, its `model_versions` row and its MLflow run."""
     history = [
